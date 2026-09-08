@@ -116,15 +116,15 @@ Give your external orchestrator the output of `node dist/cli.js skill`, or load 
 
 Copy `examples/ticket.json` to a local task file and replace all placeholders. The template is **not ready to execute unchanged**. Have the orchestrator supply:
 
-| Field | Required value |
-| --- | --- |
-| `ticketId`, `revision` | A unique task ID, starting with revision 1. |
-| `targetRepo`, `baseCommit` | An existing absolute Git repository path and a full existing commit SHA. |
-| `objective`, `context` | Concrete behavior, inputs/outputs and relevant project context. |
-| `scope`, `outOfScope` | Owned paths, exclusions and explicit boundaries. |
-| `acceptance` | Checkable criteria with unique IDs. |
-| `verification` | Commands valid in that repository, with working directories and timeouts. |
-| `execution` | Provider, model, optional reasoning settings and required credential environment names. |
+| Field                      | Required value                                                                          |
+| -------------------------- | --------------------------------------------------------------------------------------- |
+| `ticketId`, `revision`     | A unique task ID, starting with revision 1.                                             |
+| `targetRepo`, `baseCommit` | An existing absolute Git repository path and a full existing commit SHA.                |
+| `objective`, `context`     | Concrete behavior, inputs/outputs and relevant project context.                         |
+| `scope`, `outOfScope`      | Owned paths, exclusions and explicit boundaries.                                        |
+| `acceptance`               | Checkable criteria with unique IDs.                                                     |
+| `verification`             | Commands valid in that repository, with working directories and timeouts.               |
+| `execution`                | Provider, model, optional reasoning settings and required credential environment names. |
 
 Use `git -C /path/to/repository rev-parse HEAD` to inspect a candidate base; the repository must already contain a commit. A new worktree starts from the specified commit and does not inherit the primary checkout's uncommitted changes. Dependencies needed by verification must be available in the new worktree; describe the project's dependency setup in the assignment instead of assuming the primary checkout's ignored build files will be copied.
 
@@ -136,6 +136,8 @@ node dist/cli.js status EXAMPLE-01 --summary
 ```
 
 Replace `EXAMPLE-01` in subsequent commands if you chose another ID. Expected: state `ready`, with an owned worktree. Preparation does not call the model. Existing revisions cannot be edited in place; repository or base changes require a new task.
+
+The default worker model is `deepseek-v4-pro`. CLI and API tickets may omit `execution.model`; preparation stores the resolved default. The Web form and ticket template use the same model. An explicitly supplied model is preserved.
 
 ## 7. Run, observe and send instructions
 
@@ -164,7 +166,7 @@ node dist/cli.js status EXAMPLE-01
 
 The external reviewer inspects the actual diff, acceptance evidence, scope and process exit, and records separate Spec and Standards assessments. Passing tests alone do not complete review.
 
-Use [the review template](../examples/review.json) to construct a local `review.json`. Replace its task ID, revision, attempt ID and snapshot digest with the exact current submission. Set the assessments, findings and verdict to the actual review result; the template's values are examples, not an approval. Acceptance requires passing controller verification of the unchanged snapshot.
+Use [the review template](../examples/review.json) to construct a local `review.json`. Replace its task ID, revision, attempt ID and snapshot digest with the exact current submission. Set the assessments, findings and verdict to the actual review result; the template's values are examples, not an approval. Acceptance requires the latest controller verification for the current attempt and revision to pass on the unchanged snapshot.
 
 ```sh
 node dist/cli.js review --file review.json
@@ -188,7 +190,7 @@ node dist/cli.js recover --file continuation.json
 node dist/cli.js status EXAMPLE-01 --summary
 ```
 
-Expected: `ready`; no model is launched. Run again only when the continuation is ready for execution. Never edit the database or delete ownership records to bypass a failure. Historical errors remain queryable after recovery. See [Troubleshooting](troubleshooting.md) for error codes, output limits and unknown request outcomes.
+Expected: `ready` for further implementation, or `awaiting_review` when interrupted verification retained an unchanged valid delivery. No model is launched. In the latter case, rerun verification; otherwise run again only when the continuation is ready for execution. Never edit the database or delete ownership records to bypass a failure. Historical errors remain queryable after recovery. See [Troubleshooting](troubleshooting.md) for error codes, output limits and unknown request outcomes.
 
 ## Completion checklist
 

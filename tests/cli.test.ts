@@ -7,6 +7,7 @@ import { Controller } from "../packages/core/src/controller.js";
 import { startHttp } from "../packages/server/src/http.js";
 import { fixture, FakeRuntime } from "./helpers.js";
 import type { TicketView } from "../packages/contracts/src/index.js";
+import { runtimeSchema } from "../packages/contracts/src/index.js";
 import type {
   summary,
   errors,
@@ -78,6 +79,44 @@ async function setup() {
     },
   };
 }
+it.each([undefined, "deepseek-v4-flash"])(
+  "prepares and dispatches the default or explicit worker model (%s)",
+  async (model) => {
+    const s = await setup();
+    try {
+      const input = {
+        ...s.ticket,
+        execution: { ...s.ticket.execution, model },
+      };
+      const expected = model ?? "deepseek-v4-pro";
+      const prepared = await s.cli(["prepare", "--file", "-"], input);
+      expect(prepared.code, prepared.stderr).toBe(0);
+      expect(prepared.value.ticket.execution.model).toBe(expected);
+      expect(s.c.store.get(s.ticket.ticketId).ticket.execution.model).toBe(
+        expected,
+      );
+      let dispatched: string | undefined;
+      s.runtime.handler = async (request) => {
+        dispatched = request.ticket.execution.model;
+        return {};
+      };
+      s.c.run(s.ticket.ticketId);
+      expect((await s.c.wait(s.ticket.ticketId)).state).toBe("awaiting_review");
+      expect(dispatched).toBe(expected);
+    } finally {
+      await s.close();
+    }
+  },
+  15000,
+);
+it.each(["", "   ", null])(
+  "rejects an invalid explicit model (%s)",
+  (model) => {
+    expect(
+      runtimeSchema.safeParse({ provider: "deepseek-official", model }).success,
+    ).toBe(false);
+  },
+);
 it("diagnoses failed attempts without mutations and retains history after successful recovery", async () => {
   const s = await setup();
   try {

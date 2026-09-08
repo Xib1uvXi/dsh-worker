@@ -6,7 +6,7 @@ import type {
   TicketRecord,
   Snapshot,
 } from "../../contracts/src/index.js";
-import { ensure, now, canonical } from "./util.js";
+import { ensure, now, canonical } from "../../shared/src/util.js";
 
 export class Store {
   readonly db: DatabaseSync;

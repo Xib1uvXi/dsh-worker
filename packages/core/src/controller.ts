@@ -28,7 +28,7 @@ import {
   hash,
   immutable,
   inside,
-} from "./util.js";
+} from "../../shared/src/util.js";
 import {
   capture,
   checkOwnership,
@@ -36,7 +36,12 @@ import {
   createCheckoutBaseline,
   validateRepo,
 } from "./git.js";
-import { cleanEnv, discover, execute, terminate } from "./process.js";
+import {
+  cleanEnv,
+  discover,
+  execute,
+  terminate,
+} from "../../shared/src/process.js";
 import type { RuntimeAdapter } from "../../runtime/src/adapter.js";
 import { policyPatch, workflow, workerRole } from "../../runtime/src/policy.js";
 import { deliveryDocument } from "../../runtime/src/delivery.js";

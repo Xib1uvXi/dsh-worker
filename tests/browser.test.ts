@@ -131,6 +131,9 @@ it("desktop UI creates, verifies and reviews using the same typed controller", a
     page.on("pageerror", (e) => errors.push(e.message));
     await page.goto(http.url + "/#token=" + "b".repeat(64));
     await page.getByRole("button", { name: "＋ 新建任务" }).click();
+    expect(await page.locator("[name=model]").inputValue()).toBe(
+      "deepseek-v4-pro",
+    );
     await page.locator("[name=ticketId]").fill(f.ticket.ticketId);
     await page.locator("[name=title]").fill("实现可审查的代码变更");
     await page.locator("[name=targetRepo]").fill(f.ticket.targetRepo);

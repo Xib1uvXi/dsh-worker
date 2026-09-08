@@ -15,7 +15,13 @@ import type {
   Ticket,
   TicketRecord,
 } from "../../contracts/src/index.js";
-import { ensure, hash, canonical, immutable, inside } from "./util.js";
+import {
+  ensure,
+  hash,
+  canonical,
+  immutable,
+  inside,
+} from "../../shared/src/util.js";
 
 export function git(cwd: string, args: string[], input?: Buffer): Buffer {
   return execFileSync("git", ["-c", "core.quotePath=false", ...args], {
@@ -61,12 +67,10 @@ export function checkOwnership(record: TicketRecord) {
     "Worktree path changed",
   );
   const common = realpathSync(
-    gitText(record.worktree, ["rev-parse", "--git-common-dir"]).startsWith("/")
-      ? gitText(record.worktree, ["rev-parse", "--git-common-dir"])
-      : resolve(
-          record.worktree,
-          gitText(record.worktree, ["rev-parse", "--git-common-dir"]),
-        ),
+    resolve(
+      record.worktree,
+      gitText(record.worktree, ["rev-parse", "--git-common-dir"]),
+    ),
   );
   const expected = realpathSync(
     resolve(
@@ -272,6 +276,43 @@ export function createCheckoutBaseline(
   return { path, digest };
 }
 
+// --raw -z keeps unusual paths unambiguous; the patch follows a double NUL.
+// Read both together so Git computes each worktree/index diff only once.
+function readDiff(cwd: string, base: string, cached = false) {
+  const output = git(cwd, [
+    "diff",
+    ...(cached ? ["--cached"] : []),
+    "--raw",
+    "-z",
+    "--patch",
+    "--binary",
+    "--no-ext-diff",
+    "--no-textconv",
+    base,
+    "--",
+  ]);
+  if (!output.length) return { paths: [] as string[], patch: "" };
+  const separator = output.indexOf(Buffer.from([0, 0]));
+  ensure(separator >= 0, "git_output", "Missing raw/patch separator");
+  const fields = output.subarray(0, separator).toString().split("\0");
+  const paths: string[] = [];
+  for (let i = 0; i < fields.length; ) {
+    const header = fields[i++]!;
+    ensure(
+      /^:[0-7]{6} [0-7]{6} [a-f0-9]+ [a-f0-9]+ [A-Z]\d*$/.test(header),
+      "git_output",
+      "Invalid raw diff entry",
+    );
+    const status = header.split(" ").at(-1)!;
+    const source = fields[i++];
+    // --name-only reports the destination for copies and renames.
+    const path = /^[RC]/.test(status) ? fields[i++] : source;
+    ensure(source && path, "git_output", "Missing raw diff path");
+    paths.push(path);
+  }
+  return { paths, patch: output.subarray(separator + 2).toString() };
+}
+
 export function capture(
   record: TicketRecord,
   artifacts?: string,
@@ -316,32 +357,20 @@ export function capture(
   // Legacy records have no trustworthy admission-time conversion evidence.
   // Compare their raw committed bytes; never bless edits by sampling current
   // files or executing potentially changed conversion definitions on a read.
-  const tracked = git(cwd, ["ls-files", "-z", "--cached"])
+  const index = git(cwd, ["ls-files", "--stage", "-z"]);
+  const tracked = index
     .toString()
     .split("\0")
-    .filter(Boolean);
+    .filter(Boolean)
+    .map((entry) => entry.slice(entry.indexOf("\t") + 1));
   // Git-ignored build products are not deliverables; all other untracked paths are included.
   const others = git(cwd, ["ls-files", "-z", "--others", "--exclude-standard"])
     .toString()
     .split("\0")
     .filter(Boolean);
-  const changes = new Set(
-    [
-      ...git(cwd, ["diff", "--name-only", "-z", record.ticket.baseCommit])
-        .toString()
-        .split("\0"),
-      ...others,
-      ...git(cwd, [
-        "diff",
-        "--cached",
-        "--name-only",
-        "-z",
-        record.ticket.baseCommit,
-      ])
-        .toString()
-        .split("\0"),
-    ].filter(Boolean),
-  );
+  const working = readDiff(cwd, record.ticket.baseCommit);
+  const staged = readDiff(cwd, record.ticket.baseCommit, true);
+  const changes = new Set([...working.paths, ...others, ...staged.paths]);
   const names = [
     ...new Set([...baseline.keys(), ...tracked, ...others]),
   ].sort();
@@ -366,7 +395,7 @@ export function capture(
     }
     let stat;
     try {
-      stat = lstatSync(join(cwd, path));
+      stat = lstatSync(join(cwd, path), { bigint: true });
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
     }
@@ -395,8 +424,7 @@ export function capture(
         `File exceeds 32 MiB evidence limit: ${path}`,
       );
       const absolute = join(cwd, path);
-      const precise = lstatSync(absolute, { bigint: true });
-      const stamp = `${precise.dev}:${precise.ino}:${precise.mode}:${precise.size}:${precise.mtimeNs}:${precise.ctimeNs}`;
+      const stamp = `${stat.dev}:${stat.ino}:${stat.mode}:${stat.size}:${stat.mtimeNs}:${stat.ctimeNs}`;
       const cached = cache?.get(absolute);
       if (!artifacts && cached?.stamp === stamp) {
         entry = cached.entry;
@@ -407,7 +435,7 @@ export function capture(
         entry = {
           path,
           kind: "file",
-          mode: stat.mode & 0o111 ? 0o100755 : 0o100644,
+          mode: Number(stat.mode) & 0o111 ? 0o100755 : 0o100644,
           hash: hash(data),
           size: data.length,
         };
@@ -418,7 +446,13 @@ export function capture(
       }
     } else {
       violations.push(`Unsupported file or submodule: ${path}`);
-      entry = { path, kind: "file", mode: stat.mode, hash: null, size: 0 };
+      entry = {
+        path,
+        kind: "file",
+        mode: Number(stat.mode),
+        hash: null,
+        size: 0,
+      };
     }
     const base = baseline.get(path);
     // Compare the actual bytes and executable mode against the assigned Git
@@ -437,32 +471,16 @@ export function capture(
       violations.push(`Out of scope: ${path}`);
   if (head !== record.ticket.baseCommit)
     violations.push("HEAD changed from the assigned base");
-  const indexHash = hash(git(cwd, ["ls-files", "--stage", "-z"]));
-  const diff = git(cwd, [
-    "diff",
-    "--binary",
-    "--no-ext-diff",
-    "--no-textconv",
-    record.ticket.baseCommit,
-    "--",
-  ]).toString();
+  const indexHash = hash(index);
   const content = {
     baselineDigest: reference?.digest,
     baseCommit: record.ticket.baseCommit,
     head,
     indexHash,
-    indexDiff: git(cwd, [
-      "diff",
-      "--cached",
-      "--binary",
-      "--no-ext-diff",
-      "--no-textconv",
-      record.ticket.baseCommit,
-      "--",
-    ]).toString(),
+    indexDiff: staged.patch,
     files,
     changedPaths: [...changes].sort(),
-    diff,
+    diff: working.patch,
     violations,
   };
   const snapshot = { ...content, digest: hash(canonical(content)) };

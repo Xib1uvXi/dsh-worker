@@ -9,8 +9,6 @@ Use the **CLI + bundled Skill** to control tasks from an orchestrator, or the **
 - Bind acceptance to the exact delivered snapshot and external Spec/Standards review.
 - Configure worker skills explicitly, without requiring a particular personal skill suite.
 
-This is the Node implementation (schema 2); it requires no Python interpreter or controller.
-
 ## Quick start
 
 Requires **Node 24.18 or newer**, npm and Git **2.43 or newer** on macOS or Linux. macOS arm64 is the validated development platform; Linux still needs separate platform verification.
@@ -58,6 +56,8 @@ node dist/cli.js review --file review.json
 ```
 
 The [ticket template](examples/ticket.json) needs a real repository, an existing base commit, owned scope, acceptance criteria, verification commands and explicit execution settings. Replace `EXAMPLE-01` if you choose another ticket ID. A task worktree starts from the specified commit and does not inherit uncommitted changes or ignored dependencies from the primary checkout.
+
+The default worker model is `deepseek-v4-pro`. CLI and API tickets may omit `execution.model`; preparation stores the resolved default. The Web form and ticket template use the same model. An explicitly supplied model is preserved.
 
 The [review template](examples/review.json) must identify the current ticket revision, attempt and snapshot, with the external reviewer's actual Spec and Standards decisions. The examples are templates, not ready-to-run assignments or approvals.
 
@@ -158,10 +158,10 @@ Runtime behavior uses the official `dsh --profile sdk` launcher and ordered patc
 | [Bundled orchestrator skill](skill/SKILL.md)   | Assignment handoff and the CLI review loop                                    |
 | [Skill configuration](docs/skills.md)          | Optional worker skills and instruction files                                  |
 | [CLI troubleshooting](docs/troubleshooting.md) | Error codes, failed verification, historical attempts and safe recovery       |
-| [Architecture](docs/architecture.md)           | Components, durable contracts and upstream source basis                       |
+| [Architecture](docs/architecture.md)           | Components, durable contracts and runtime integration                         |
 | [Project workflow](docs/agents/domain.md)      | Repository guidance, local task tracking, domain context and decision records |
+| [Performance experiments](docs/performance.md) | Snapshot ablations, workload and measured tradeoffs                           |
 | [Verification record](docs/verification.md)    | Recorded checks and the limits of their evidence                              |
-| [Migration](docs/migration.md)                 | Python-to-TypeScript and CLI + Skill compatibility                            |
 
 ## License
 

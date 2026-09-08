@@ -1,6 +1,6 @@
 # Verification record
 
-Use current command results for current changes. Historical runs below describe their recorded snapshot only; they are not a permanent acceptance gate or proof of current provider behavior. The maintained commands are in [the repository guide](../AGENTS.md#build-and-validate).
+Use current command results for current changes. Recorded runs describe their measured snapshot only; they are not a permanent acceptance gate or proof of current provider behavior. The maintained commands are in [the repository guide](../AGENTS.md#build-and-validate).
 
 ## Maintained checks
 
@@ -12,63 +12,36 @@ Use current command results for current changes. Historical runs below describe 
 
 Deterministic SDK fixtures are not provider/model execution. A skipped browser or unavailable runtime check is not a pass. Linux needs its own host evidence; the recorded platform is Node 24.18.0 / macOS arm64. Desktop is the browser acceptance target.
 
-## Historical evidence — 2026-09-08
+## Current acceptance
 
-The TypeScript rebuild initially passed 41 tests and isolated package/runtime smoke checks. Later batches added Web instructions and trajectories, desktop layout, CLI + Skill integration, persistent Dashboard authentication, configurable worker skills and CLI diagnostics. The last recorded pre-repair complete gate passed 67 tests in 12 files. Authentication, workflow and diagnostics batches recorded independent review; earlier rebuild batches recorded self-review only. These historical details remain available in Git history rather than depending on private scratch logs.
+The snapshot optimization and cleanup batch uses base commit `e3757cb6ecf0c8809809f78dcfbfd7c2d7c78985` plus the uncommitted changes. The source/test/script/build-config manifest has 61 files and SHA-256 `74a0411a422eb5a0ae7fbe93a0127a2da24513d2dd9b8a5b35ff525f0d1237e9`.
 
-One real provider task (`LIVE-E2E-01`, DeepSeek V4 Flash through Harness 0.1.3-alpha.2) exercised implementation, instruction receipt, recovery, verification, external review and integration. Two earlier deliveries were rejected for their envelope or schema; attempt `a05bb13a-7aae-4ca1-ac4e-f11f6ddac17a` submitted and passed 18 controller verification tests at snapshot `94b6993a0e11c05439f1151d29c636dee466f9474a2c86d3b53620c9e1bc56ab`. The isolated target integration reran those 18 tests. This historical record proves neither eight concurrent provider tasks nor Linux parity nor deployment of subsequent changes.
+- `npm run check`: lint, type checking, build/declarations and **111 tests in 17 files passed** (67.90 seconds).
+- Source/document formatting, maintained documentation links and `git diff --check` passed.
+- `npx tsx scripts/package-smoke.ts --offline` using that completed build passed public exports, **three actual doctor runs**, and the missing-native-binding diagnostic in a fresh installation. Model calls: **0**.
+- Independent full-batch review passed **Spec and Standards**, with no blocker. The reviewer independently checked raw statistics, source identities, dependency versions and extra Git formatting configurations.
+- The final paired snapshot benchmark recorded 11 samples for each of six cases, with identical snapshot digests. The exact, cached and existing-evidence medians improved by 29.0%, 35.9% and 31.6%, respectively. Historical implementation logs and superseded repair narratives remain in Git history, rather than in the operator guide. See [Performance experiments](performance.md) for reproducible workload definitions, measurements and retained safeguards.
 
-## Polling and recovery repair
+## Default worker model
 
-Acceptance covers responsive compact polling; durable process identity changes without repetitive writes; UTF-8 chunk boundaries; one unambiguous delivery document after ordinary Markdown prose; unchanged-delivery verification recovery; short settlement/review transactions; bounded scratch cleanup; enforced import directions; and removal of obsolete Python-era UI tests and private-log dependencies from maintained documentation.
+The follow-up change defaults omitted `execution.model` to `deepseek-v4-pro` during ticket validation and preserves explicit models. Its 61-file source/test/script/build-config manifest has SHA-256 `2fc5a9cb136b11401d78c2b2d3c5495a71c5a261df525fbd07a24860306518e9`.
 
-The new regressions use local resources and deterministic runtime behavior. No real provider task is required or claimed for this repair. Results on Node 24.18.0 / macOS arm64:
+- `npm run check`: lint, type checking, build/declarations and **117 tests in 17 files passed** (69.94 seconds), including actual doctor initialization/close with **0 model calls**.
+- CLI tests cover default persistence and dispatch, explicit model preservation and invalid explicit values. Public-SDK subprocess fixtures check the model received in the actual `initialize` RPC; browser tests check the new-task form default.
+- Source and changed-document formatting and `git diff --check` passed.
+- Independent review passed **Spec and Standards**, with no blocker; all 61 source identities matched the validated manifest.
+- The snapshot collector and benchmark sources remain unchanged from the performance measurement above.
 
-- `npm run check`: 76 tests across 15 files passed, including desktop Chromium, real process recovery and SDK wire fixtures (69.01 seconds).
-- Independent full review found three P2s: token initialization before ownership, compact overview replacing open detail evidence, and legacy inline snapshots retaining large polling responses. All were repaired. Focused lifecycle/auth/regression/boundary checks passed 20 tests; subsequent browser/client/CLI checks passed 14 tests. Independent focused re-review passed both Spec and Standards with no remaining blocker.
-- Final performance regression: 5,000 baseline files, full response 686,365 bytes, compact polling 2,278 bytes, cached query 0.05 ms. The event loop advanced during the first asynchronous check. Twenty identical process reports produced only one ownership-addition event and one final empty-set event. Both performance tests passed after the review fixes.
-- Final type checking, build/declarations, formatting, local documentation links and whitespace checks passed. The source/test/config snapshot (58 files; excludes documentation) is `2c7451e8d6366eebd3cc6570840c632a4acebc34f0ff756a866231c66540620e`, based on exact commit `e63beffc35510a8743e3ed7ffdfd8f164c3c7ab7` plus the uncommitted repair.
-- The local released runtime initialized and closed through `doctor` with zero model calls. Public exports loaded from an independently installed tarball. That fresh offline install's `doctor` failed with `cannot create effect on inactive context`; the exact pre-repair baseline reproduced the same error against those installed dependencies. Fresh-install runtime validation therefore remains failed, not a pass; the cause was not established by this repair.
+## Real provider end-to-end check
 
-No real provider/model execution, Linux validation, commit, integration or deployment is claimed for this repair.
+On 2026-09-08, the same validated source snapshot was packed and installed into an isolated consumer. Its actual CLI/service used the released SDK/runtime `0.1.3-alpha.2` and the DeepSeek official provider, with no wire fixture or replacement launcher.
 
-## Lint capability
+- The input ticket omitted `execution.model`; preparation persisted `deepseek-v4-pro`. One real attempt implemented a dependency/resource-aware queue selector, ran tests and returned a valid delivery with receipt, raw completed reason and clean process exit. No recovery or retry was needed.
+- The controller independently ran **16/16 passing tests**: ten original acceptance tests remained unchanged and six worker tests were added. Verification before/after hashes matched delivered snapshot `c600831d4c4eb9bdf92f9f6e80545d14ec1745afbbe71af07ee2fed07e5d9fe9`. Independent Spec and Standards review passed, and the review API recorded `accepted`.
+- Both changed-file artifacts were downloaded through the authenticated CLI and hash-checked. Integration into the disposable target matched all five delivered file hashes/modes and the tracked patch; its **16/16 tests passed** again.
+- Chromium displayed the real task and Pro model without page errors. Restarting the installed service preserved acceptance, snapshot and single-attempt history without replay. Execution and verification process scans found zero surviving owned processes; both service instances shut down cleanly.
+- The fresh installation's actual doctor initialized and closed successfully with **0 model calls**. The coding task above did make real provider requests; the zero-call claim applies only to doctor.
 
-Acceptance covers linting maintained TypeScript and JavaScript source, tests and configuration; type-aware Promise checks; browser restrictions on Node globals and literal module imports; generated-file exclusions; safe automatic fixes; and inclusion in the complete implementation gate. Existing formatting and runtime checks remain applicable.
+This is one real coding task on macOS arm64, not a load test, Linux validation or deployment. Private credentials, service state and detailed task evidence remain outside shared source control.
 
-Results on Node 24.18.0 / macOS arm64:
-
-- `npm run check`: lint, type checking, build/declarations and 87 tests across 16 files passed. Nine lint regression cases exercise invalid and valid snippets, automatic fixes, ignored paths, and static/dynamic browser imports.
-- `npm run format:check` and `git diff --check` passed. The source/test/config snapshot (60 files, excluding documentation) is `175343e509df7ada8c2a03697b06298b3b22bb2a3866b1d82d7dd8bb575299e5`, based on commit `e63beffc35510a8743e3ed7ffdfd8f164c3c7ab7` plus the uncommitted repair and lint changes.
-- Independent full review passed Spec and Standards with no blocker. The reviewer compared this batch against its pre-lint file snapshot, checked the complete validation log and confirmed that existing dependency versions were unchanged.
-
-This batch adds development checks; it does not establish fresh-install runtime, provider execution or Linux validation.
-
-## Ownership, scope, freshness and doctor repair
-
-Acceptance covers exclusive controller ownership when contenders reclaim the same dead process marker; scope enforcement for actual file changes hidden by Git index flags or mode configuration; automatic stale-evidence updates in an open detail view; and working local/fresh-install doctor initialization and shutdown without a model request.
-
-Results on Node 24.18.0 / macOS arm64:
-
-- The new regressions failed against the previous implementation: both controlled lock contenders opened the same home; assume-unchanged, skip-worktree and disabled file-mode tracking hid an out-of-scope file; and the open browser detail did not display the stale warning.
-- `npm run check`: lint, type checking, build/declarations and 98 tests in 17 files passed. This includes real concurrent processes and crash recovery, hidden-change scope blocking and artifact contents, stale warning appearance/removal, real SDK doctor initialization/close, and the existing 5,000-file polling performance check.
-- `npm run test:package -- --offline`: a fresh tarball install passed public imports and three actual doctor runs with zero model calls. Removing only the disposable consumer's `fs_ext.node` produced the new `runtime_dependencies` diagnostic; restoring it restored successful doctor initialization. Successful doctor runs left no scratch directory.
-- The earlier fresh-install failure was traced to that check's `npm install --ignore-scripts`: the missing `fs-ext` native binding caused Harness to roll back plugin loading and expose `cannot create effect on inactive context`. Rebuilding only `fs-ext` in the original failing installation restored doctor. No upstream code or npm policy was changed. A script-disabled installation is not a runtime-ready installation.
-- Independent full review found one P2: raw blob comparison rejected a legitimate CRLF checkout. Focused re-review exposed a second route: changing the smudge configuration could redefine the comparison. Six conversion regressions now cover normal CRLF/smudge checkouts, hidden byte edits, edited attributes, changed filter configuration/programs, restart/cache behavior and baseline tampering. The final fix pins admission-time conversion overrides as immutable evidence and retains staged-change checks; final closure follows owner adjudication and the regression results.
-- Source formatting, local documentation links and whitespace checks passed. The source/test/config snapshot (65 files, excluding documentation) is `a6650334e4d3d7422b936b34651cdc1192a727f1d23129b7df9f3e3fa328be33`, based on commit `e63beffc35510a8743e3ed7ffdfd8f164c3c7ab7` plus the uncommitted repair batches.
-
-This verifies local runtime startup and shutdown, not provider/model execution, Linux support, integration or deployment.
-
-## Full code review and repair
-
-The full review covered maintained packages, scripts, contracts, build/lint configuration, tests and applicable documentation, including existing uncommitted repairs. Eight confirmed defects were fixed: synchronous runtime exceptions retaining capacity; acceptance using an old verification pass after a newer failure; plugin readiness exceptions leaking service resources; compressed session rotation causing an uncaught read error; empty-token authentication bypass; health reading an obsolete lock; out-of-order detail responses selecting the wrong task; and instruction receipts deleting a newer unsent draft.
-
-Results on Node 24.18.0 / macOS arm64:
-
-- `npm run check`: lint, type checking, build/declarations and 106 tests in 17 files passed (81.76 seconds). Regressions include success/failure/success verification, real HTTP authentication, an isolated process for the session-file race, lifecycle resource release, upgraded service discovery and Chromium request-order/draft-preservation checks. Existing fake runtimes now wait for launch or receipt before issuing dependent actions.
-- `npm run format:check` and `git diff --check` passed.
-- `npx tsx scripts/package-smoke.ts --offline`, using that completed build, passed public imports, three real doctor runs and the missing-native-binding diagnostic in a fresh tarball installation. Doctor made zero model calls.
-- The source/test/script/build-config snapshot (65 files, excluding documentation) is `9a0e307e01fc7a9bcf4c872e01ffb27c01345e73ff4cf9d9f482d60689e0778a`, based on commit `e63beffc35510a8743e3ed7ffdfd8f164c3c7ab7` plus the preserved uncommitted work and this repair.
-- Independent full review and focused re-review passed Spec and Standards after all eight fixes. The reviewer inspected the fixes and regressions, confirmed all 65 manifest entries and checked the complete validation log without repeating the build.
-
-No provider/model execution, Linux runtime validation, commit, integration or deployment is claimed by this batch.
+A passing local runtime check does not establish provider credentials, model execution, Linux support, integration or deployment. The SDK profile test resolves the installed launcher and confirms delegation remains disabled and token exhaustion is not success. The fresh-package check repeats runtime startup after a normal dependency installation.

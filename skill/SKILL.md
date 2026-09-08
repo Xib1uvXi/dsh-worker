@@ -25,6 +25,8 @@ dsh-worker wait TASK-01 --timeout 300 --home /path/to/controller
 
 Adapt [the ticket template](../examples/ticket.json) before use. Schema 2 binds the target repository, existing base commit, task ID/revision, objective, owned/excluded paths, acceptance criteria, verification commands and explicit model configuration. `prepare` creates an independent worktree. Existing revisions are immutable; requirement changes need the next revision, and repository/base changes need a new task.
 
+The default worker model is `deepseek-v4-pro`. CLI and API tickets may omit `execution.model`; preparation stores the resolved default. The Web form and ticket template use the same model. An explicitly supplied model is preserved.
+
 The service continues execution after `run` returns. Schedule independent tasks within capacity while accounting for shared resources. A task cannot execute and verify concurrently. Use `wait` or `run/verify --wait` for bounded waiting. A wait timeout does not cancel or resend work. After a timeout or lost connection, inspect state before deciding whether another action is appropriate.
 
 ## Send follow-up instructions

@@ -3,7 +3,7 @@ import { resolve, join } from "node:path";
 import { existsSync, readFileSync } from "node:fs";
 import { Controller } from "../packages/core/src/controller.js";
 import { SdkRuntime } from "../packages/runtime/src/adapter.js";
-import { marked, cleanEnv } from "../packages/core/src/process.js";
+import { marked, cleanEnv } from "../packages/shared/src/process.js";
 import { fixture } from "./helpers.js";
 const controllers: Controller[] = [];
 afterEach(async () => {
@@ -20,22 +20,30 @@ function setup() {
   controllers.push(c);
   return { ...f, c };
 }
-it("runs the public TypeScript SDK against a real wire subprocess and persists raw events", async () => {
-  const s = setup();
-  s.c.prepare(s.ticket);
-  s.c.run(s.ticket.ticketId);
-  const t = await s.c.wait(s.ticket.ticketId);
-  expect(t.state, t.error).toBe("awaiting_review");
-  expect(t.attempts[0]?.receipt).toBe(true);
-  expect(t.attempts[0]?.cleanExit).toBe(true);
-  expect(marked(t.attempts[0]!.marker)).toHaveLength(0);
-  const events = readFileSync(
-    join(s.home, "runs", t.attempts[0]!.id, "events.jsonl"),
-    "utf8",
-  );
-  expect(events).toContain("agent/inbox/spliced");
-  expect(events).toContain("turn/end");
-}, 20000);
+it.each([undefined, "deepseek-v4-flash"])(
+  "runs the public SDK subprocess with the default or explicit model (%s) and persists raw events",
+  async (model) => {
+    const s = setup();
+    s.c.prepare({
+      ...s.ticket,
+      context: `FIXTURE_EXPECT_MODEL=${model ?? "deepseek-v4-pro"}`,
+      execution: { ...s.ticket.execution, model },
+    });
+    s.c.run(s.ticket.ticketId);
+    const t = await s.c.wait(s.ticket.ticketId);
+    expect(t.state, t.error).toBe("awaiting_review");
+    expect(t.attempts[0]?.receipt).toBe(true);
+    expect(t.attempts[0]?.cleanExit).toBe(true);
+    expect(marked(t.attempts[0]!.marker)).toHaveLength(0);
+    const events = readFileSync(
+      join(s.home, "runs", t.attempts[0]!.id, "events.jsonl"),
+      "utf8",
+    );
+    expect(events).toContain("agent/inbox/spliced");
+    expect(events).toContain("turn/end");
+  },
+  20000,
+);
 it("cancels the owned runtime and detached descendants without a cancel RPC", async () => {
   const s = setup();
   s.ticket.context = "FIXTURE_HANG";
@@ -76,7 +84,7 @@ it("uses an explicit scrubbed environment and rejects reserved config overrides"
   }
 });
 it("decodes verifier stdout and stderr independently across UTF-8 chunks", async () => {
-  const { execute } = await import("../packages/core/src/process.js");
+  const { execute } = await import("../packages/shared/src/process.js");
   const { randomUUID } = await import("node:crypto");
   const s = fixture();
   const result = await execute(

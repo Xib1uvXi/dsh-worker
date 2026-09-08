@@ -8,7 +8,7 @@ import {
 } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { serviceToken } from "../packages/cli/src/auth.js";
+import { serviceToken } from "../packages/shared/src/service-token.js";
 
 it("retains a private per-home token across clean shutdown and uses different identities for different homes", () => {
   const home = mkdtempSync(join(tmpdir(), "worker-auth-"));

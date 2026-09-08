@@ -1,8 +1,8 @@
 import { DatabaseSync } from "node:sqlite";
 import { existsSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { alive, identity } from "./process.js";
-import { ensure } from "./util.js";
+import { alive, identity } from "../../shared/src/process.js";
+import { ensure } from "../../shared/src/util.js";
 
 // A separate SQLite connection holds an OS-backed lock for the owner's lifetime.
 // Never unlink this database: contenders must lock the same inode, including

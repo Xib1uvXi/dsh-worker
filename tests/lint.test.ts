@@ -11,7 +11,7 @@ it("detects unused variables and unhandled promises in TypeScript", async () => 
   expect(
     await rules(
       "const unused = 1; Promise.resolve(1); export {};",
-      "packages/core/src/util.ts",
+      "packages/shared/src/util.ts",
     ),
   ).toEqual(
     expect.arrayContaining([
@@ -25,7 +25,7 @@ it("detects async callbacks in synchronous contracts and non-Promise awaits", as
   expect(
     await rules(
       "setTimeout(async () => { await 1; }, 1); export {};",
-      "packages/core/src/process.ts",
+      "packages/shared/src/process.ts",
     ),
   ).toEqual(
     expect.arrayContaining([
@@ -63,7 +63,7 @@ it("checks JS fixtures and config while ignoring generated and personal files", 
   expect(
     await rules(
       "export const ready = Promise.resolve(1);",
-      "packages/core/src/util.ts",
+      "packages/shared/src/util.ts",
     ),
   ).toEqual([]);
 });
@@ -71,7 +71,7 @@ it("checks JS fixtures and config while ignoring generated and personal files", 
 it("can apply safe lint fixes", async () => {
   const fixer = new ESLint({ fix: true });
   const [result] = await fixer.lintText("let count = 1; export { count };", {
-    filePath: "packages/core/src/util.ts",
+    filePath: "packages/shared/src/util.ts",
   });
   expect(result?.output).toContain("const count");
   expect(result?.errorCount).toBe(0);

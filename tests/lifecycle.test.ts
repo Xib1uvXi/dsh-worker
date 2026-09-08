@@ -4,9 +4,9 @@ import { promisify } from "node:util";
 import { existsSync, writeFileSync, mkdirSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { Controller } from "../packages/core/src/controller.js";
-import { delay } from "../packages/core/src/util.js";
+import { delay } from "../packages/shared/src/util.js";
 import { fixture, FakeRuntime } from "./helpers.js";
-import { marked } from "../packages/core/src/process.js";
+import { marked } from "../packages/shared/src/process.js";
 import type { Context } from "@deepseek-ai/cordis";
 import { apply } from "../packages/server/src/plugin.js";
 

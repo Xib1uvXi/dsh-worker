@@ -1,21 +1,16 @@
 # TypeScript worker architecture
 
-This replaces the Python controller. The worker implements code changes; an external orchestrator owns requirements, scheduling, review, acceptance and integration. Acceptance never means merged or released. The worker runtime prohibits delegation; development review follows the current repository working guide.
+The worker implements code changes; an external orchestrator owns requirements, scheduling, review, acceptance and integration. Acceptance never means merged or released. The worker runtime prohibits delegation; development review follows the current repository working guide.
 
-## Source basis
+## Runtime integration
 
-Design inspection: DeepSeek Harness checkout c389f96bf3a9b6807cb71ed6bdad5849be0df6d8. Distribution target: exact npm 0.1.3-alpha.2 (the checkout is newer and is not represented as the release).
-
-- `docs/architecture.md`: plugins contribute reversible effects and typed services; all supported Node launches use dsh and named profiles, extended by ordered patches.
-- `packages/sdk/client`: public TypeScript SDK owns a runtime subprocess, explicit environment replaces inherited environment, receipt-to-idle is an activity interval rather than proof of success.
-- `packages/sdk/protocol`: no cancel/session-close RPC or version negotiation. Close the owned runtime on cancellation; use fresh sessions for explicit continuation.
-- `packages/core/session`: durable turn/end reasons, model-visible input must be reconstructable from the log.
+The distribution uses the public `@deepseek-ai/dsh-sdk-client` version pinned by `package.json` and `package-lock.json`. The SDK owns the runtime subprocess; named profiles and ordered patches configure it. The worker supplies an explicit environment, listens for native turn/receipt events and closes the owned runtime on cancellation. Receipt or idle alone is not acceptance. Local initialization and resolved policy behavior are checked by the doctor tests; SDK wire fixtures cover execution and instruction delivery.
 
 ## Components
 
 `contracts` owns validated commands and browser-safe DTOs. `core` owns SQLite transactions, immutable ticket revisions, attempts, snapshots, independent verification and review. `runtime` adapts the public TS SDK behind an owned execution process and a final worker policy overlay. `server` mounts lifecycle resources as a Cordis plugin and exposes authenticated loopback HTTP plus replayable events. `cli` is a client of that same service, guided by the bundled skill. `web` imports the same contract types and supplies task creation, filtering, details, execution/cancellation, verification, review and explicit recovery.
 
-No embedded planning model, replacement agent loop, Python bridge, auto merge, remote execution or automatic retry. Independent tickets may run concurrently up to a configured capacity; a ticket has one execution/verification owner. Start intent is persisted before any subprocess or model send. Restart does not replay prompts and fences uncertain executions until owned processes are accounted for. Runtime environment and per-attempt Harness home are isolated. Worktrees are cooperative isolation, not a security boundary against malicious code.
+No embedded planning model, replacement agent loop, auto merge, remote execution or automatic retry. Independent tickets may run concurrently up to a configured capacity; a ticket has one execution/verification owner. Start intent is persisted before any subprocess or model send. Restart does not replay prompts and fences uncertain executions until owned processes are accounted for. Runtime environment and per-attempt Harness home are isolated. Worktrees are cooperative isolation, not a security boundary against malicious code.
 
 ## Durable rules
 
@@ -23,9 +18,9 @@ A dedicated `controller-ownership.sqlite` connection holds an exclusive lock for
 
 SQLite is authoritative; a journal in the same transaction provides ordered, replayable UI events. Large artifacts use content-addressed immutable files. A snapshot includes HEAD, staged state, file content, executable modes, symlink targets, tracked deletions and untracked files. Review requires the exact revision, attempt and snapshot; the latest verification for that attempt and revision must pass without changing the before/after snapshot. A newer failed or incomplete verification supersedes an earlier pass. Accepted evidence is reported stale after edits. Complete requires raw completed plus receipt, delivery bound to the current attempt, snapshot in scope and clean process exit. Unknown outcomes stay interrupted. Recovery is inspect-first and an explicit continuation never sends a prompt.
 
-## Migration and compatibility
+## Compatibility
 
-The old Python source, tests, archives and controller data have been removed at the user's request. Node data uses `~/.dsh-worker-v2` by default and refuses to open an older SQLite schema. Existing JSON contracts require explicit conversion to schema 2; never silently reinterpret old execution or acceptance evidence. The observer reads canonical Harness session headers without rewriting their source; old controller history is not imported as new acceptance evidence. No global skill or configuration changes are implicit.
+Controller data uses schema 2 and `~/.dsh-worker-v2` by default. An unsupported SQLite schema is refused; legacy contracts must be converted explicitly. Session observation does not import controller history or promote it to acceptance evidence. Configuration and controller data remain outside the repository.
 
 ## Acceptance for this rebuild
 
@@ -57,7 +52,7 @@ Web trajectory polling updates every second while viewing, dashboard activity ev
 
 ## Orchestrator entry: CLI + Skill
 
-The orchestrator invokes the regular CLI and follows the bundled skill returned by `skill`. The former MCP adapter and direct SDK dependency have been removed. There is no stdio protocol server to register. CLI and Web still share authenticated loopback control and persistent state.
+The orchestrator invokes the regular CLI and follows the bundled skill returned by `skill`. CLI and Web share authenticated loopback control and persistent state.
 
 CLI covers prepare, run, status/list, bounded waiting, natural-language instructions, cancellation/recovery, verification/review, archive/restore, hash-verified artifact retrieval, and local skill/workflow discovery. JSON input can come from files or stdin; instruction text can also come from a UTF-8 file or stdin. A stable instruction identity is required for safe retries. Detailed trajectory, raw event and agent-activity querying are Web-only; no CLI trace-query command is provided.
 
@@ -67,7 +62,7 @@ HTTP overview and CLI wait use compact ticket records. Snapshot manifests are st
 
 Polling checks run in one background worker. Requests for the same ticket state share a check and reuse its result for at most three seconds (`snapshotCheckedAt`, `snapshotMaxAgeMs`). File hashes are reused only when inode, size, mode, nanosecond modification and change times match. These checks inform display; verification, review and recovery capture exact contents without this cache. Running/ready polling does not capture a repository. The synchronous embedding `status()` remains an explicit immediate inspection; transports use `pollStatus()` / `pollOverview()`.
 
-Periodic process scans use asynchronous OS commands and persist only identity-set changes. Initial ownership and final cleanup remain mandatory. Snapshot capture for settlement and review occurs before the short SQLite state transaction. Snapshots still hash the complete delivered tree and staged state; blob storage copies only changed files. Changed paths also compare actual file bytes and executable modes with the assigned base tree in its checkout representation, so assume-unchanged/skip-worktree index flags and `core.fileMode=false` cannot hide scope violations; staged-only changes remain included. At first worktree creation, Git 2.43+ reconstructs checkout bytes from the assigned commit and its attributes. Conversion overrides are saved once as a content-addressed baseline outside ticket JSON; the ticket retains only its path and digest. Subsequent snapshots verify this immutable evidence and bind its digest, so later attribute, filter configuration or filter program changes cannot redefine the admitted baseline. Polling never runs conversion filters. Legacy records without this admission evidence compare raw committed bytes and never infer a new baseline from current files or filter settings. Existing immutable blobs reuse a checked inode/metadata cache, while artifact downloads always hash the actual bytes.
+Periodic process scans use asynchronous OS commands and persist only identity-set changes. Initial ownership and final cleanup remain mandatory. Snapshot capture for settlement and review occurs before the short SQLite state transaction. Each capture reads index entries once for both paths and identity, and obtains raw changed paths and the binary patch from one Git diff per working/staged comparison. File metadata is read once per entry. Ownership, symlink and evidence checks remain active. Snapshots still hash the complete delivered tree and staged state; blob storage copies only changed files. Changed paths also compare actual file bytes and executable modes with the assigned base tree in its checkout representation, so assume-unchanged/skip-worktree index flags and `core.fileMode=false` cannot hide scope violations; staged-only changes remain included. At first worktree creation, Git 2.43+ reconstructs checkout bytes from the assigned commit and its attributes. Conversion overrides are saved once as a content-addressed baseline outside ticket JSON; the ticket retains only its path and digest. Subsequent snapshots verify this immutable evidence and bind its digest, so later attribute, filter configuration or filter program changes cannot redefine the admitted baseline. Polling never runs conversion filters. Legacy records without this admission evidence compare raw committed bytes and never infer a new baseline from current files or filter settings. Existing immutable blobs reuse a checked inode/metadata cache, while artifact downloads always hash the actual bytes.
 
 Verification interruption retains its operation kind across restarts and recovery failures. After explicit cleanup, an unchanged valid delivery returns to `awaiting_review` for another verification, with no new model attempt. A changed or invalid delivery returns to `ready`; verification is never inferred to have passed.
 

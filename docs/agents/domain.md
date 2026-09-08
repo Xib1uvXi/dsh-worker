@@ -4,14 +4,14 @@ Treat this repository as one product context with six internal package areas. Sh
 
 ## Read by affected area
 
-| Change | Primary material |
-| --- | --- |
-| Ticket validation, states and DTOs | `packages/contracts/src/index.ts` and Architecture's durable rules |
-| Persistence, ownership, snapshots, verification or review | `packages/core`, relevant tests and Architecture |
-| SDK execution, policy or skill configuration | `packages/runtime`, [Skill configuration](../skills.md) and runtime/workflow tests |
-| HTTP, events, session headers or trajectory | `packages/server`, `packages/web`, Architecture and HTTP/browser tests |
-| CLI, authentication or operator flow | `packages/cli`, [Getting started](../getting-started.md), [Troubleshooting](../troubleshooting.md) and CLI/client tests |
-| Compatibility or evidence claims | [Migration](../migration.md), [Verification record](../verification.md) and current source |
+| Change                                                    | Primary material                                                                                                        |
+| --------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| Ticket validation, states and DTOs                        | `packages/contracts/src/index.ts` and Architecture's durable rules                                                      |
+| Persistence, ownership, snapshots, verification or review | `packages/core`, relevant tests and Architecture                                                                        |
+| SDK execution, policy or skill configuration              | `packages/runtime`, [Skill configuration](../skills.md) and runtime/workflow tests                                      |
+| HTTP, events, session headers or trajectory               | `packages/server`, `packages/web`, Architecture and HTTP/browser tests                                                  |
+| CLI, authentication or operator flow                      | `packages/cli`, [Getting started](../getting-started.md), [Troubleshooting](../troubleshooting.md) and CLI/client tests |
+| Compatibility or evidence claims                          | [Verification record](../verification.md) and current source                                                            |
 
 The root `AGENTS.md` supplies contributor instructions. The [bundled skill](../../skill/SKILL.md) supplies product operation instructions. The [task tracker](issue-tracker.md) supplies development planning conventions. Personal skill routing and per-controller runtime selections remain separate from these shared documents.
 

@@ -90,6 +90,67 @@ it("includes staged index-only content and unusual filenames in snapshot identit
     true,
   );
 });
+it.each(["rename", "copy", "unmerged", "binary"])(
+  "preserves exact Git patch evidence for %s changes",
+  (kind) => {
+    const s = setup();
+    s.ticket.scope.paths = ["."];
+    const t = s.c.prepare(s.ticket);
+    const git = (args: string[], input?: string) =>
+      execFileSync(
+        "git",
+        ["-C", t.worktree, "-c", "core.quotePath=false", ...args],
+        { input },
+      );
+    const unusual = "colon:\t文\n.txt";
+    if (kind === "rename") git(["mv", "source.txt", unusual]);
+    else if (kind === "copy") {
+      git(["config", "diff.renames", "copies"]);
+      writeFileSync(join(t.worktree, unusual), "baseline\n");
+      writeFileSync(join(t.worktree, "source.txt"), "changed\n");
+      git(["add", "."]);
+    } else if (kind === "unmerged") {
+      const stages = ["baseline\n", "ours\n", "theirs\n"].map((value) =>
+        git(["hash-object", "-w", "--stdin"], value).toString().trim(),
+      );
+      git(
+        ["update-index", "--index-info"],
+        stages.map((oid, i) => `100644 ${oid} ${i + 1}\tsource.txt\n`).join(""),
+      );
+      writeFileSync(join(t.worktree, "source.txt"), "conflict\n");
+    } else {
+      writeFileSync(join(t.worktree, "source.txt"), Buffer.from([0, 255, 10]));
+      git(["add", "."]);
+      writeFileSync(join(t.worktree, "source.txt"), Buffer.from([0, 255, 20]));
+    }
+    const snapshot = capture(t);
+    for (const cached of [false, true]) {
+      const flags = cached ? ["--cached"] : [];
+      const patch = git([
+        "diff",
+        ...flags,
+        "--binary",
+        "--no-ext-diff",
+        "--no-textconv",
+        t.ticket.baseCommit,
+        "--",
+      ]).toString();
+      expect(cached ? snapshot.indexDiff : snapshot.diff).toBe(patch);
+      const names = git([
+        "diff",
+        ...flags,
+        "--name-only",
+        "-z",
+        t.ticket.baseCommit,
+      ])
+        .toString()
+        .split("\0")
+        .filter(Boolean);
+      for (const path of names) expect(snapshot.changedPaths).toContain(path);
+    }
+    expect(snapshot.violations).toEqual([]);
+  },
+);
 it("does not read content outside the checkout through a symlink", () => {
   const s = setup();
   s.ticket.scope.paths = ["."];
