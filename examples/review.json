@@ -1,0 +1,12 @@
+{
+  "schemaVersion": 2,
+  "ticketId": "EXAMPLE-01",
+  "revision": 1,
+  "attemptId": "replace-with-current-attempt-id",
+  "snapshotDigest": "0000000000000000000000000000000000000000000000000000000000000000",
+  "spec": {"verdict": "pass", "findings": []},
+  "standards": {"verdict": "pass", "findings": []},
+  "verdict": "accept",
+  "findings": [],
+  "reviewer": "replace-with-external-reviewer"
+}

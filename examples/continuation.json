@@ -1,0 +1,7 @@
+{
+  "ticketId": "EXAMPLE-01",
+  "revision": 1,
+  "attemptId": "replace-with-current-attempt-id",
+  "snapshotDigest": "0000000000000000000000000000000000000000000000000000000000000000",
+  "instruction": "Replace with a concrete continuation after inspecting the failure, process ownership and current snapshot."
+}

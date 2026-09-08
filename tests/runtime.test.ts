@@ -1,0 +1,77 @@
+import { afterEach, expect, it } from "vitest";
+import { resolve, join } from "node:path";
+import { existsSync, readFileSync } from "node:fs";
+import { Controller } from "../packages/core/src/controller.js";
+import { SdkRuntime } from "../packages/runtime/src/adapter.js";
+import { marked, cleanEnv } from "../packages/core/src/process.js";
+import { fixture } from "./helpers.js";
+const controllers: Controller[] = [];
+afterEach(async () => {
+  for (const c of controllers.splice(0)) await c.close();
+});
+function setup() {
+  const f = fixture();
+  const c = new Controller({
+    home: f.home,
+    runtime: new SdkRuntime(resolve("dist/runner.js")),
+    dispatchEnabled: true,
+    dshBin: resolve("tests/fixtures/runtime.mjs"),
+  });
+  controllers.push(c);
+  return { ...f, c };
+}
+it("runs the public TypeScript SDK against a real wire subprocess and persists raw events", async () => {
+  const s = setup();
+  s.c.prepare(s.ticket);
+  s.c.run(s.ticket.ticketId);
+  const t = await s.c.wait(s.ticket.ticketId);
+  expect(t.state, t.error).toBe("awaiting_review");
+  expect(t.attempts[0]?.receipt).toBe(true);
+  expect(t.attempts[0]?.cleanExit).toBe(true);
+  expect(marked(t.attempts[0]!.marker)).toHaveLength(0);
+  const events = readFileSync(
+    join(s.home, "runs", t.attempts[0]!.id, "events.jsonl"),
+    "utf8",
+  );
+  expect(events).toContain("agent/inbox/spliced");
+  expect(events).toContain("turn/end");
+}, 20000);
+it("cancels the owned runtime and detached descendants without a cancel RPC", async () => {
+  const s = setup();
+  s.ticket.context = "FIXTURE_HANG";
+  s.c.prepare(s.ticket);
+  s.c.run(s.ticket.ticketId);
+  for (let i = 0; i < 60; i++) {
+    await new Promise((r) => setTimeout(r, 100));
+    const a = s.c.status(s.ticket.ticketId).attempts[0]!;
+    if (existsSync(join(s.home, "runs", a.id, "events.jsonl"))) break;
+  }
+  const t = await s.c.cancel(s.ticket.ticketId);
+  expect(t.state).toBe("interrupted");
+  expect(t.attempts[0]?.termination).toBe("cancelled");
+  expect(marked(t.attempts[0]!.marker)).toHaveLength(0);
+}, 20000);
+it("enforces an outer deadline on receipt-to-idle waiting", async () => {
+  const s = setup();
+  s.ticket.context = "FIXTURE_HANG";
+  s.ticket.execution.timeoutSeconds = 1;
+  s.c.prepare(s.ticket);
+  s.c.run(s.ticket.ticketId);
+  const t = await s.c.wait(s.ticket.ticketId);
+  expect(t.state).toBe("interrupted");
+  expect(t.attempts[0]?.termination).toBe("timeout");
+  expect(marked(t.attempts[0]!.marker)).toHaveLength(0);
+}, 20000);
+it("uses an explicit scrubbed environment and rejects reserved config overrides", () => {
+  process.env.DSH_HOME = "ambient-home";
+  process.env.UNRELATED_SECRET = "secret";
+  try {
+    const env = cleanEnv([]);
+    expect(env.DSH_HOME).toBeUndefined();
+    expect(env.UNRELATED_SECRET).toBeUndefined();
+    expect(() => cleanEnv(["NODE_OPTIONS"])).toThrow(/Reserved/);
+  } finally {
+    delete process.env.DSH_HOME;
+    delete process.env.UNRELATED_SECRET;
+  }
+});

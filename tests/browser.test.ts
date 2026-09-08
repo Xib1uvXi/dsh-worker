@@ -1,0 +1,383 @@
+import { expect, it } from "vitest";
+import { chromium } from "@playwright/test";
+import { resolve, join } from "node:path";
+import { mkdirSync } from "node:fs";
+import { Controller } from "../packages/core/src/controller.js";
+import { startHttp } from "../packages/server/src/http.js";
+import { fixture, FakeRuntime } from "./helpers.js";
+it("desktop UI creates, verifies and reviews using the same typed controller", async () => {
+  const f = fixture();
+  const c = new Controller({
+    home: f.home,
+    runtime: new FakeRuntime(),
+    dispatchEnabled: true,
+  });
+  const http = await startHttp(c, {
+    port: 0,
+    token: "b".repeat(64),
+    webDir: resolve("dist/web"),
+  });
+  const browser = await chromium.launch({ headless: true });
+  try {
+    const page = await browser.newPage({
+      viewport: { width: 1440, height: 1000 },
+    });
+    page.setDefaultTimeout(5000);
+    const errors: string[] = [];
+    page.on("pageerror", (e) => errors.push(e.message));
+    await page.goto(http.url + "/#token=" + "b".repeat(64));
+    await page.getByRole("button", { name: "＋ 新建任务" }).click();
+    await page.locator("[name=ticketId]").fill(f.ticket.ticketId);
+    await page.locator("[name=title]").fill("实现可审查的代码变更");
+    await page.locator("[name=targetRepo]").fill(f.ticket.targetRepo);
+    await page.locator("[name=baseCommit]").fill(f.ticket.baseCommit);
+    await page.locator("[name=objective]").fill(f.ticket.objective);
+    await page.locator("[name=paths]").fill("source.txt");
+    await page
+      .locator("[name=acceptance]")
+      .fill(f.ticket.acceptance[0]!.description);
+    await page.getByText("高级派工单", { exact: true }).click();
+    await page.locator("#ticket-json").fill(JSON.stringify(f.ticket));
+    await page.getByRole("button", { name: "准备工作目录" }).click();
+    await page.locator("#create").waitFor({ state: "hidden" });
+    await page.locator(".task").first().click();
+    await page.getByRole("button", { name: "开始实现", exact: true }).click();
+    await c.wait(f.ticket.ticketId);
+    await page.getByRole("button", { name: "刷新详情", exact: true }).click();
+    await page.getByRole("button", { name: "运行独立验证" }).click();
+    await c.wait(f.ticket.ticketId);
+    await page.getByRole("button", { name: "刷新详情", exact: true }).click();
+    await page
+      .getByLabel("审查者", { exact: true })
+      .fill("Browser acceptance reviewer");
+    await page.getByRole("button", { name: "验收通过", exact: true }).click();
+    await page
+      .getByText("验收通过 · 合并情况未记录", { exact: true })
+      .waitFor();
+    expect(c.status(f.ticket.ticketId).state).toBe("accepted");
+    await page.keyboard.press("Escape");
+    await page.getByRole("button", { name: "刷新", exact: true }).click();
+    mkdirSync(".scratch/typescript-rebuild/browser", { recursive: true });
+    await page.screenshot({
+      path: ".scratch/typescript-rebuild/browser/desktop.png",
+      fullPage: true,
+    });
+    await page.getByRole("button", { name: "看板", exact: true }).click();
+    expect(await page.locator(".board-column").count()).toBe(5);
+    await page.getByRole("button", { name: "列表", exact: true }).click();
+    expect(
+      await page.evaluate(
+        () => document.documentElement.scrollWidth <= window.innerWidth,
+      ),
+    ).toBe(true);
+    await page.getByLabel("搜索任务", { exact: true }).fill("does-not-exist");
+    await page.getByText("没有匹配的任务", { exact: true }).waitFor();
+    expect(errors).toEqual([]);
+  } finally {
+    await browser.close();
+    await http.close();
+    await c.close();
+  }
+}, 30000);
+
+it("desktop natural-language entry, live agent trajectory, revision editing and archive work together", async () => {
+  const f = fixture();
+  f.ticket.execution.timeoutSeconds = 60;
+  const { SdkRuntime } = await import("../packages/runtime/src/adapter.js");
+  const c = new Controller({
+    home: f.home,
+    runtime: new SdkRuntime(resolve("dist/runner.js")),
+    dispatchEnabled: true,
+    dshBin: resolve("tests/fixtures/steering.mjs"),
+  });
+  const http = await startHttp(c, {
+    port: 0,
+    token: "c".repeat(64),
+    webDir: resolve("dist/web"),
+  });
+  const browser = await chromium.launch({ headless: true });
+  try {
+    const page = await browser.newPage({
+      viewport: { width: 1440, height: 1000 },
+    });
+    page.setDefaultTimeout(8000);
+    const errors: string[] = [];
+    page.on("pageerror", (e) => errors.push(e.message));
+    await page.goto(http.url + "/#token=" + "c".repeat(64));
+    await page.getByLabel("你希望 Worker 完成什么？").fill(f.ticket.objective);
+    await page
+      .getByRole("button", { name: "用这条指令创建任务", exact: true })
+      .click();
+    expect(await page.locator("[name=objective]").inputValue()).toBe(
+      f.ticket.objective,
+    );
+    await page.locator("[name=ticketId]").fill(f.ticket.ticketId);
+    await page.locator("[name=targetRepo]").fill(f.ticket.targetRepo);
+    await page.locator("[name=baseCommit]").fill(f.ticket.baseCommit);
+    await page.locator("[name=paths]").fill("source.txt");
+    await page
+      .locator("[name=acceptance]")
+      .fill(f.ticket.acceptance[0]!.description);
+    await page.getByText("高级派工单", { exact: true }).click();
+    await page.locator("#ticket-json").fill(JSON.stringify(f.ticket));
+    await page
+      .getByRole("button", { name: "准备工作目录", exact: true })
+      .click();
+    await page.locator("#create").waitFor({ state: "hidden" });
+    await page.locator(".task").first().click();
+    await page
+      .getByLabel("追加自然语言指令", { exact: true })
+      .fill("Keep the change small.");
+    await page
+      .getByRole("button", { name: "保存执行指令", exact: true })
+      .click();
+    await page.getByText("等待下次执行 · 版本 1", { exact: true }).waitFor();
+    await page.getByRole("button", { name: "开始实现", exact: true }).click();
+    await page
+      .locator(".trajectory .tool-event summary")
+      .filter({ hasText: "调用工具 · read_file" })
+      .waitFor();
+    await page
+      .locator(".trajectory .tool-event summary")
+      .filter({ hasText: "调用工具 · read_file" })
+      .click();
+    await page
+      .locator(".trajectory .tool-event[open] > pre")
+      .filter({ hasText: "source.txt" })
+      .first()
+      .waitFor();
+    await page.keyboard.press("Escape");
+    await page.locator("#agent-cards .agent-card.running").waitFor();
+    expect(await page.locator("#agent-cards").innerText()).toContain(
+      "read_file",
+    );
+    mkdirSync(".scratch/web-control/browser", { recursive: true });
+    await page.screenshot({
+      path: ".scratch/web-control/browser/agents.png",
+      fullPage: true,
+    });
+    await page.getByRole("button", { name: "查看执行", exact: true }).click();
+    await page
+      .getByLabel("追加自然语言指令", { exact: true })
+      .fill("Now finish the implementation.");
+    await page
+      .getByRole("button", { name: "发送到当前执行", exact: true })
+      .click();
+    await page.getByText("等待外部审查与验收", { exact: true }).waitFor();
+    await page.getByLabel("轨迹类型", { exact: true }).selectOption("tool/");
+    await page
+      .locator(".trajectory summary")
+      .filter({ hasText: "工具结果" })
+      .first()
+      .click();
+    await page
+      .locator(".trajectory pre")
+      .filter({ hasText: "baseline" })
+      .first()
+      .waitFor();
+    await page.screenshot({
+      path: ".scratch/web-control/browser/trajectory.png",
+      fullPage: true,
+    });
+    await page
+      .getByRole("button", { name: "编辑任务版本", exact: true })
+      .click();
+    await page.locator("[name=title]").fill("Updated from the Web");
+    await page
+      .getByRole("button", { name: "准备工作目录", exact: true })
+      .click();
+    await page.locator("#create").waitFor({ state: "hidden" });
+    expect(c.status(f.ticket.ticketId).ticket.revision).toBe(2);
+    await page.getByRole("button", { name: "归档任务", exact: true }).click();
+    await page
+      .getByRole("button", { name: "恢复到任务列表", exact: true })
+      .waitFor();
+    await page.keyboard.press("Escape");
+    await page.getByLabel("归档筛选", { exact: true }).selectOption("archived");
+    await page.locator(".task").first().click();
+    await page
+      .getByRole("button", { name: "恢复到任务列表", exact: true })
+      .click();
+    await page.getByRole("button", { name: "归档任务", exact: true }).waitFor();
+    expect(c.status(f.ticket.ticketId).archived).toBe(false);
+    expect(errors).toEqual([]);
+  } finally {
+    await browser.close();
+    await http.close();
+    await c.close();
+  }
+}, 40000);
+
+it("keeps grouped task navigation, collapsed sections and board navigation usable in the compact desktop layout", async () => {
+  const f = fixture();
+  const c = new Controller({ home: f.home, runtime: new FakeRuntime() });
+  const items = [
+    ["WORK-21", "实现任务执行轨迹与事件回放", "running"],
+    ["WORK-22", "支持运行中追加自然语言指令", "running"],
+    ["WORK-23", "优化工作空间的任务筛选体验", "ready"],
+    ["WORK-24", "补充异常断线后的恢复验证", "ready"],
+    ["WORK-25", "完善工具调用结果的关联展示", "awaiting_review"],
+    ["WORK-26", "调整任务详情与审查信息布局", "awaiting_review"],
+    ["WORK-27", "检查执行进程的回收记录", "blocked"],
+    ["WORK-28", "共享前后端任务数据类型", "accepted"],
+    ["WORK-29", "提供任务归档与恢复入口", "accepted"],
+    ["WORK-30", "验证事件游标的连续性", "accepted"],
+    ["WORK-31", "支持本地工作目录隔离", "accepted"],
+    ["WORK-32", "接入 Harness SDK 生命周期", "accepted"],
+  ] as const;
+  // Display fixtures exercise all visual states; they are not real worker deliveries.
+  for (const [ticketId, title, state] of items) {
+    c.prepare({ ...f.ticket, ticketId, title, project: "dsh-worker" });
+    c.store.update(ticketId, "fixture.display-state", (r) => {
+      r.state = state;
+    });
+  }
+  const http = await startHttp(c, {
+    port: 0,
+    token: "visual-fixture",
+    webDir: resolve("dist/web"),
+  });
+  const browser = await chromium.launch({ headless: true });
+  try {
+    const page = await browser.newPage({
+      viewport: { width: 1440, height: 1000 },
+    });
+    page.setDefaultTimeout(5000);
+    await page.goto(http.url + "/#token=visual-fixture");
+    const visualErrors: string[] = [];
+    page.on("pageerror", (e) => visualErrors.push(e.message));
+    await page
+      .locator(".task-group")
+      .first()
+      .waitFor()
+      .catch(async (error) => {
+        throw new Error(
+          String(error) +
+            "\n" +
+            JSON.stringify(visualErrors) +
+            "\n" +
+            (await page.locator("body").innerText()),
+        );
+      });
+    expect(await page.locator(".task").count()).toBe(12);
+    await page.locator(".group-heading").filter({ hasText: "已验收" }).click();
+    await page.getByRole("button", { name: "刷新", exact: true }).click();
+    expect(
+      await page
+        .locator(".group-heading")
+        .filter({ hasText: "已验收" })
+        .getAttribute("aria-expanded"),
+    ).toBe("false");
+    await page.locator(".group-heading").filter({ hasText: "已验收" }).click();
+    mkdirSync(".scratch/linear-ui/browser", { recursive: true });
+    await page.screenshot({
+      path: ".scratch/linear-ui/browser/workspace.png",
+      fullPage: true,
+    });
+    await page.getByRole("button", { name: "看板", exact: true }).click();
+    expect(await page.locator(".board-column").count()).toBe(5);
+    expect(await page.locator(".task").count()).toBe(12);
+    await page.screenshot({
+      path: ".scratch/linear-ui/browser/board.png",
+      fullPage: true,
+    });
+    await page.getByRole("button", { name: "列表", exact: true }).click();
+    await page.locator(".task").filter({ hasText: "WORK-23" }).click();
+    await page
+      .getByRole("button", { name: "编辑任务版本", exact: true })
+      .waitFor();
+    await page.getByLabel("追加自然语言指令", { exact: true }).waitFor();
+    await page.screenshot({
+      path: ".scratch/linear-ui/browser/detail.png",
+      fullPage: true,
+    });
+    await page.keyboard.press("Escape");
+    await page.getByRole("button", { name: "会话记录", exact: true }).click();
+    await page.getByText("尚未连接会话来源。", { exact: true }).waitFor();
+    await page.getByRole("button", { name: "任务工作台", exact: true }).click();
+    await page.getByLabel("你希望 Worker 完成什么？").waitFor();
+    expect(
+      await page.evaluate(
+        () => document.documentElement.scrollWidth <= innerWidth,
+      ),
+    ).toBe(true);
+  } finally {
+    await browser.close();
+    await http.close();
+    await c.close();
+  }
+}, 30000);
+
+it("remembers Dashboard authentication across browser sessions and same-home server restarts", async () => {
+  const f = fixture();
+  const { spawn } = await import("node:child_process");
+  const { existsSync, readFileSync, unlinkSync } = await import("node:fs");
+  const start = async (port: number) => {
+    const child = spawn(
+      process.execPath,
+      [
+        resolve("dist/cli.js"),
+        "serve",
+        "--port",
+        String(port),
+        "--home",
+        f.home,
+      ],
+      { stdio: "ignore" },
+    );
+    const exited = new Promise<void>((r) => child.once("exit", () => r()));
+    const stop = async () => {
+      child.kill("SIGTERM");
+      await exited;
+    };
+    try {
+      await expect
+        .poll(() => existsSync(join(f.home, "service.json")), { timeout: 8000 })
+        .toBe(true);
+      return {
+        child,
+        stop,
+        service: JSON.parse(
+          readFileSync(join(f.home, "service.json"), "utf8"),
+        ) as { url: string; token: string },
+      };
+    } catch (e) {
+      await stop();
+      throw e;
+    }
+  };
+  let service = await start(0);
+  const browser = await chromium.launch({ headless: true });
+  try {
+    let context = await browser.newContext();
+    let page = await context.newPage();
+    page.setDefaultTimeout(5000);
+    await page.goto(service.service.url);
+    await page.getByText("连接失败，保留上次结果", { exact: false }).waitFor();
+    expect(await page.locator("#connection").innerText()).toContain(
+      "完整登录链接",
+    );
+    await page.goto(service.service.url + "/#token=" + service.service.token);
+    await page.getByText("准备好下一项工作", { exact: true }).waitFor();
+    expect(new URL(page.url()).hash).toBe("");
+    const storage = await context.storageState();
+    const old = service.service;
+    await context.close();
+    await service.stop();
+    service = await start(Number(new URL(old.url).port));
+    expect(service.service.token).toBe(old.token);
+    context = await browser.newContext({ storageState: storage });
+    page = await context.newPage();
+    page.setDefaultTimeout(5000);
+    await page.goto(old.url);
+    await page.getByText("准备好下一项工作", { exact: true }).waitFor();
+    expect(await page.locator("#login").isHidden()).toBe(true);
+    // Explicit replacement links must take precedence over stale persisted credentials.
+    await page.evaluate(() => localStorage.setItem("worker-token", "obsolete"));
+    await page.goto(old.url + "/#token=" + old.token);
+    await page.getByText("准备好下一项工作", { exact: true }).waitFor();
+  } finally {
+    await browser.close();
+    await service.stop();
+  }
+}, 25000);

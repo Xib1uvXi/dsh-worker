@@ -1,0 +1,21 @@
+# Node build and test artifacts
+node_modules/
+dist/
+coverage/
+playwright-report/
+test-results/
+*.tgz
+
+# Local controller state and personal evidence
+.dsh-worker/
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
+*.sqlite3
+*.sqlite3-wal
+*.sqlite3-shm
+.scratch/
+
+# Editor / OS files
+.DS_Store
+*.swp

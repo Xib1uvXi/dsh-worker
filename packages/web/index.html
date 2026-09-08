@@ -1,0 +1,213 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>dsh-worker · 任务工作台</title>
+    <link rel="stylesheet" href="/style.css" />
+  </head>
+  <body>
+    <div class="shell">
+      <aside class="sidebar">
+        <a class="brand" href="/"
+          ><span class="brand-mark">d</span><span>dsh-worker</span
+          ><span class="workspace-chevron">⌄</span></a
+        >
+        <div class="nav-section-label">Workspace</div>
+        <nav>
+          <button id="nav-tasks" class="nav active">
+            <span aria-hidden="true">▤</span>任务工作台
+          </button>
+          <button id="nav-sessions" class="nav">
+            <span aria-hidden="true">◷</span>会话记录
+          </button>
+        </nav>
+        <div class="sidebar-context">
+          <span class="nav-section-label">工作方式</span>
+          <p>外部模型调度</p>
+          <small>需求与审查由调度者负责<br />Worker 实现与验证代码</small>
+        </div>
+        <div class="sidebar-note">
+          <span class="dot"></span>本地工作空间<small>DSH WORKER</small>
+        </div>
+      </aside>
+      <main>
+        <header>
+          <div class="breadcrumb">
+            <span class="breadcrumb-icon">▤</span><span>Workspace</span
+            ><span class="breadcrumb-separator">/</span>
+            <h1 id="page-title">任务工作台</h1>
+          </div>
+          <button id="new-task" class="primary">＋ 新建任务</button>
+        </header>
+        <div id="connection" role="status" class="connection">
+          正在连接本地服务…
+        </div>
+        <section id="login" hidden>
+          <label
+            >连接令牌<input
+              id="token"
+              type="password"
+              autocomplete="off" /></label
+          ><button id="connect">连接</button>
+        </section>
+        <div id="tasks-view" class="workspace">
+          <section class="issues-pane" aria-label="任务列表与看板">
+            <div class="toolbar task-toolbar">
+              <input
+                id="search"
+                type="search"
+                aria-label="搜索任务"
+                placeholder="搜索任务…"
+              /><select id="filter" aria-label="筛选状态">
+                <option value="all">全部状态</option>
+                <option value="ready">待开始</option>
+                <option value="running">实现中</option>
+                <option value="awaiting_review">待审查</option>
+                <option value="attention">需处理</option>
+                <option value="accepted">已验收</option></select
+              ><select id="archive-filter" aria-label="归档筛选">
+                <option value="active">当前任务</option>
+                <option value="archived">已归档</option>
+                <option value="all">包含归档</option></select
+              ><button id="refresh">刷新</button>
+            </div>
+            <div class="list-heading">
+              <span id="task-count">任务</span>
+              <div class="layout-controls" aria-label="任务布局">
+                <button id="layout-list" aria-pressed="true">列表</button
+                ><button id="layout-board" aria-pressed="false">看板</button>
+              </div>
+            </div>
+            <div id="tasks" class="task-list"></div>
+          </section>
+          <div class="inspector">
+            <section class="overview-panel">
+              <div class="panel-heading">
+                <h2>工作空间概览</h2>
+                <span class="panel-icon">◴</span>
+              </div>
+              <div id="metrics" class="metrics"></div>
+            </section>
+            <section class="composer workspace-composer">
+              <div class="panel-heading">
+                <h2>下达指令</h2>
+                <span class="panel-icon">↗</span>
+              </div>
+              <label for="natural-instruction">你希望 Worker 完成什么？</label
+              ><textarea
+                id="natural-instruction"
+                rows="4"
+                placeholder="描述一项任务，例如：为订单列表增加状态筛选，并补充测试。"
+              ></textarea>
+              <div class="actions">
+                <button id="instruction-create" class="primary">
+                  用这条指令创建任务
+                </button>
+              </div>
+              <p class="subtle">
+                准备时补齐范围与验收。执行中可在任务详情追加指令。
+              </p>
+            </section>
+            <section id="active-agents">
+              <div class="panel-heading">
+                <h2>Agent 动态</h2>
+                <span class="panel-icon">◉</span>
+              </div>
+              <div id="agent-cards" class="agent-grid"></div>
+            </section>
+          </div>
+        </div>
+        <section id="sessions-view" hidden>
+          <div class="section-title">会话记录</div>
+          <p class="subtle">
+            会话记录不代表当前在线。任务执行状态以控制服务为准。
+          </p>
+          <div id="sessions"></div>
+        </section>
+      </main>
+    </div>
+    <dialog id="detail">
+      <div class="dialog-head">
+        <h2 id="detail-title"></h2>
+        <button id="close-detail" aria-label="关闭详情">✕</button>
+      </div>
+      <div id="detail-body"></div>
+    </dialog>
+    <dialog id="create">
+      <form id="create-form" novalidate>
+        <div class="dialog-head">
+          <h2>准备新任务</h2>
+          <button type="button" id="close-create" aria-label="关闭新建">
+            ✕
+          </button>
+        </div>
+        <p>明确范围、验收与基准提交。准备工作目录不会启动模型。</p>
+        <div class="form-grid">
+          <label
+            >任务编号<input
+              name="ticketId"
+              required
+              placeholder="WORKER-01" /></label
+          ><label
+            >标题<input
+              name="title"
+              required
+              placeholder="实现一项明确的能力" /></label
+          ><label
+            >仓库绝对路径<input
+              name="targetRepo"
+              required
+              placeholder="/path/to/repository" /></label
+          ><label
+            >基准提交 SHA<input
+              name="baseCommit"
+              required
+              pattern="[a-f0-9]{40}"
+          /></label>
+        </div>
+        <label
+          >目标<textarea name="objective" required rows="3"></textarea></label
+        ><label
+          >允许修改的路径（每行一项）<textarea name="paths" required rows="2">
+src/
+tests/</textarea
+          ></label
+        ><label
+          >验收标准（每行一项）<textarea
+            name="acceptance"
+            required
+            rows="3"
+          ></textarea></label
+        ><label
+          >验证命令参数（JSON 数组）<input
+            name="verification"
+            required
+            value='["npm","test"]'
+        /></label>
+        <div class="form-grid">
+          <label
+            >Provider<input
+              name="provider"
+              required
+              value="deepseek-official" /></label
+          ><label
+            >模型<input name="model" required value="deepseek-v4-pro"
+          /></label>
+        </div>
+        <details>
+          <summary>高级派工单</summary>
+          <p>可粘贴完整 schemaVersion 2 JSON，覆盖上方字段。</p>
+          <textarea
+            id="ticket-json"
+            rows="10"
+            aria-label="完整派工单 JSON"
+          ></textarea>
+        </details>
+        <p id="create-error" role="alert"></p>
+        <button class="primary" type="submit">准备工作目录</button>
+      </form>
+    </dialog>
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>
