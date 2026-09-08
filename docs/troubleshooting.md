@@ -40,3 +40,23 @@ Historical errors remain after recovery and acceptance. Use `currentState` and `
 - **Accepted but stale**: The checkout changed after acceptance. Do not treat the old accepted snapshot as approval for the new content.
 
 Suggestions returned by `diagnose` are argument arrays to inspect and use deliberately. The command never starts, cancels, recovers, edits state or accepts work on the caller's behalf.
+
+## Missing native runtime dependencies
+
+`doctor` reports `runtime_dependencies` when the installed Harness persistence module cannot load. A missing `fs_ext.node` commonly means installation skipped lifecycle scripts; the upstream launcher may otherwise obscure this failure as `cannot create effect on inactive context` while rolling back plugin loading.
+
+From the npm installation directory, with the required native build tools available and the package's script permitted by your npm policy, run:
+
+```sh
+npm rebuild fs-ext
+# Source checkout:
+node dist/cli.js doctor
+# Installed package:
+npx dsh-worker doctor
+```
+
+Use the doctor command appropriate to your installation. [npm rebuild](https://docs.npmjs.com/cli/v11/commands/npm-rebuild/) reruns dependency lifecycle scripts; it cannot repair a missing compiler or a policy that still prevents those scripts. Doctor reports the underlying module error and does not install dependencies or change npm policy itself.
+
+## Legacy converted worktrees
+
+Schema-2 tickets created before admission baselines were recorded remain readable and use the raw assigned Git tree for scope checks. For an old ticket using CRLF or smudge conversions, the original checkout representation cannot safely be reconstructed from current files or current filter programs. If this causes a scope block, preserve the old evidence and prepare a new ticket/worktree to record a trusted baseline. Revisions and recovery do not silently rebaseline an existing worktree. A missing or modified recorded baseline is an integrity failure and must not be replaced with current working content.

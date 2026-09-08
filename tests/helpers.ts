@@ -2,7 +2,7 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execFileSync } from "node:child_process";
-import { ticketSchema, type Ticket } from "../packages/contracts/src/index.js";
+import { ticketSchema } from "../packages/contracts/src/index.js";
 import type {
   RuntimeAdapter,
   RuntimeOutcome,

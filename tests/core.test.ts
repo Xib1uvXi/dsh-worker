@@ -6,10 +6,10 @@ import {
   symlinkSync,
   chmodSync,
 } from "node:fs";
+import { execFileSync } from "node:child_process";
 import { join } from "node:path";
 import { Controller } from "../packages/core/src/controller.js";
 import { capture } from "../packages/core/src/git.js";
-import { ticketSchema } from "../packages/contracts/src/index.js";
 import { fixture, FakeRuntime } from "./helpers.js";
 const controllers: Controller[] = [];
 function setup(enabled = true) {
@@ -45,6 +45,46 @@ function review(
   };
 }
 describe("durable control contracts", () => {
+  it("releases capacity when a runtime throws before returning a promise", async () => {
+    const s = setup();
+    s.runtime.execute = () => {
+      throw new Error("synchronous admission failure");
+    };
+    s.c.prepare(s.ticket);
+    s.c.run(s.ticket.ticketId);
+    const t = await s.c.wait(s.ticket.ticketId);
+    expect(t.state).toBe("interrupted");
+    expect(s.c.recovery(s.ticket.ticketId).canRecover).toBe(true);
+  });
+  it("refuses acceptance after a newer verification fails on unchanged content", async () => {
+    const s = setup();
+    const gate = join(s.root, "verification-gate");
+    writeFileSync(gate, "pass");
+    s.ticket.verification = [
+      {
+        args: [
+          process.execPath,
+          "-e",
+          `process.exit(require('fs').readFileSync(${JSON.stringify(gate)}, 'utf8') === 'pass' ? 0 : 1)`,
+        ],
+        cwd: ".",
+        timeoutSeconds: 5,
+      },
+    ];
+    await submit(s);
+    s.c.verify(s.ticket.ticketId);
+    let t = await s.c.wait(s.ticket.ticketId);
+    expect(t.verifications.at(-1)?.passed).toBe(true);
+    writeFileSync(gate, "fail");
+    s.c.verify(s.ticket.ticketId);
+    t = await s.c.wait(s.ticket.ticketId);
+    expect(t.verifications.at(-1)?.passed).toBe(false);
+    expect(() => s.c.review(review(t))).toThrow(/verification/);
+    writeFileSync(gate, "pass");
+    s.c.verify(s.ticket.ticketId);
+    t = await s.c.wait(s.ticket.ticketId);
+    expect(s.c.review(review(t)).state).toBe("accepted");
+  });
   it("prepares isolated work and preserves dirty primary checkout", () => {
     const s = setup();
     writeFileSync(join(s.repo, "source.txt"), "personal");
@@ -94,6 +134,7 @@ describe("durable control contracts", () => {
     s.c.run(s.ticket.ticketId);
     expect(() => s.c.run(s.ticket.ticketId)).toThrow(/active/);
     expect(() => s.c.prepare({ ...s.ticket, revision: 2 })).toThrow(/active/);
+    await Promise.resolve();
     release();
     await s.c.wait(s.ticket.ticketId);
     expect(s.runtime.count).toBe(1);
@@ -248,3 +289,173 @@ describe("durable control contracts", () => {
     expect(capture(t).digest).not.toBe(before.digest);
   });
 });
+
+it.each(["assume-unchanged", "skip-worktree", "filemode"])(
+  "blocks an out-of-scope change hidden by Git %s",
+  async (mode) => {
+    const f = fixture();
+    writeFileSync(join(f.repo, "protected.txt"), "protected baseline\n");
+    const git = (...args: string[]) =>
+      execFileSync("git", ["-C", f.repo, ...args], { encoding: "utf8" });
+    git("add", ".");
+    git("commit", "-m", "protected baseline");
+    f.ticket.baseCommit = git("rev-parse", "HEAD").trim();
+    const runtime = new FakeRuntime();
+    runtime.handler = async (request) => {
+      if (mode === "filemode") {
+        execFileSync("git", [
+          "-C",
+          request.worktree,
+          "config",
+          "core.fileMode",
+          "false",
+        ]);
+        chmodSync(join(request.worktree, "protected.txt"), 0o755);
+      } else {
+        execFileSync("git", [
+          "-C",
+          request.worktree,
+          "update-index",
+          "--" + mode,
+          "protected.txt",
+        ]);
+        writeFileSync(
+          join(request.worktree, "protected.txt"),
+          "hidden change\n",
+        );
+      }
+      return {};
+    };
+    const c = new Controller({ home: f.home, runtime, dispatchEnabled: true });
+    controllers.push(c);
+    c.prepare(f.ticket);
+    c.run(f.ticket.ticketId);
+    const t = await c.wait(f.ticket.ticketId);
+    const snapshot = t.attempts[0]!.snapshot!;
+    expect(snapshot.changedPaths).toContain("protected.txt");
+    expect(snapshot.violations).toContain("Out of scope: protected.txt");
+    expect(t.state).toBe("blocked");
+    expect(() => c.verify(f.ticket.ticketId)).toThrow();
+    const protectedFile = snapshot.files.find(
+      (file) => file.path === "protected.txt",
+    )!;
+    expect(
+      readFileSync(
+        join(f.home, "artifacts", "blobs", protectedFile.hash!),
+        "utf8",
+      ),
+    ).toBe(mode === "filemode" ? "protected baseline\n" : "hidden change\n");
+  },
+);
+
+it.each([
+  "crlf",
+  "crlf-to-lf",
+  "smudge",
+  "edited-attributes",
+  "smudge-config",
+  "smudge-program",
+])(
+  "accepts a clean %s checkout but blocks hidden edits to its converted file",
+  async (conversion) => {
+    const f = fixture();
+    const git = (...args: string[]) =>
+      execFileSync("git", ["-C", f.repo, ...args], { encoding: "utf8" });
+    const filtered = !conversion.startsWith("crlf");
+    const smudgeProgram = join(f.root, "smudge.sh");
+    writeFileSync(
+      join(f.repo, ".gitattributes"),
+      filtered
+        ? "protected.txt filter=fixture\n"
+        : "protected.txt text eol=crlf\n",
+    );
+    writeFileSync(join(f.repo, "protected.txt"), "base\n");
+    if (filtered) {
+      writeFileSync(smudgeProgram, "sed s/base/checked-out/g\n");
+      git(
+        "config",
+        "filter.fixture.smudge",
+        conversion === "smudge-program"
+          ? `sh '${smudgeProgram}'`
+          : "sed s/base/checked-out/g",
+      );
+      // A clean filter that erases differences must not suppress scope checks.
+      git("config", "filter.fixture.clean", "printf 'base\\n'");
+      git("config", "filter.spoof.smudge", "printf 'hidden change\\n'");
+      git("config", "filter.spoof.clean", "printf 'base\\n'");
+    }
+    git("add", ".");
+    git("commit", "-m", "checkout conversion");
+    f.ticket.baseCommit = git("rev-parse", "HEAD").trim();
+    f.ticket.scope.paths.push(".gitattributes");
+    const runtime = new FakeRuntime();
+    runtime.handler = async (request) => {
+      execFileSync("git", [
+        "-C",
+        request.worktree,
+        "update-index",
+        "--assume-unchanged",
+        "protected.txt",
+      ]);
+      if (conversion === "smudge-config")
+        execFileSync("git", [
+          "-C",
+          request.worktree,
+          "config",
+          "filter.fixture.smudge",
+          "printf 'hidden change\\n'",
+        ]);
+      if (conversion === "smudge-program")
+        writeFileSync(
+          smudgeProgram,
+          "cat >/dev/null; printf 'hidden change\\n'\n",
+        );
+      if (conversion === "edited-attributes")
+        writeFileSync(
+          join(request.worktree, ".gitattributes"),
+          "protected.txt filter=spoof\n",
+        );
+      writeFileSync(
+        join(request.worktree, "protected.txt"),
+        conversion === "crlf-to-lf" ? "base\n" : "hidden change\n",
+      );
+      return {};
+    };
+    const c = new Controller({ home: f.home, runtime, dispatchEnabled: true });
+    controllers.push(c);
+    const prepared = c.prepare(f.ticket);
+    expect(prepared.state).toBe("ready");
+    expect(
+      execFileSync("git", ["-C", prepared.worktree, "status", "--porcelain"], {
+        encoding: "utf8",
+      }),
+    ).toBe("");
+    expect(readFileSync(join(prepared.worktree, "protected.txt"), "utf8")).toBe(
+      filtered ? "checked-out\n" : "base\r\n",
+    );
+    c.run(f.ticket.ticketId);
+    const t = await c.wait(f.ticket.ticketId);
+    expect(t.state).toBe("blocked");
+    expect(t.attempts[0]!.snapshot!.violations).toContain(
+      "Out of scope: protected.txt",
+    );
+    if (conversion === "smudge-config") {
+      const reference = t.checkoutBaseline!;
+      await c.close();
+      controllers.splice(controllers.indexOf(c), 1);
+      const reopened = new Controller({ home: f.home, runtime });
+      controllers.push(reopened);
+      const persisted = reopened.store.get(f.ticket.ticketId);
+      expect(persisted.checkoutBaseline).toEqual(reference);
+      const cache = new Map();
+      expect(capture(persisted, undefined, cache).violations).toContain(
+        "Out of scope: protected.txt",
+      );
+      expect(capture(persisted, undefined, cache).violations).toContain(
+        "Out of scope: protected.txt",
+      );
+      writeFileSync(reference.path, "{}");
+      expect(() => capture(persisted)).toThrow(/baseline evidence changed/);
+    }
+  },
+);

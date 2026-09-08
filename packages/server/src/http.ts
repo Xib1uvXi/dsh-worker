@@ -4,19 +4,11 @@ import {
   type ServerResponse,
 } from "node:http";
 import { timingSafeEqual } from "node:crypto";
-import {
-  readFileSync,
-  existsSync,
-  readdirSync,
-  openSync,
-  readSync,
-  closeSync,
-  lstatSync,
-} from "node:fs";
+import { readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { z } from "zod";
 import type { Controller } from "../../core/src/controller.js";
-import { WorkerError, ensure, hash } from "../../core/src/util.js";
+import { WorkerError, ensure, hash } from "../../shared/src/util.js";
 import { sessions } from "./observer.js";
 import { trajectory } from "./trajectory.js";
 
@@ -28,17 +20,18 @@ function json(res: ServerResponse, value: unknown, status = 200) {
   res.end(JSON.stringify(value));
 }
 async function body(req: IncomingMessage) {
-  let data = "";
+  const chunks: Buffer[] = [];
+  let size = 0;
   for await (const chunk of req) {
-    data += String(chunk);
-    ensure(
-      Buffer.byteLength(data) <= 1024 * 1024,
-      "body_size",
-      "Request exceeds 1 MiB",
-    );
+    const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    chunks.push(bytes);
+    size += bytes.length;
+    ensure(size <= 1024 * 1024, "body_size", "Request exceeds 1 MiB");
   }
   try {
-    return JSON.parse(data);
+    return JSON.parse(
+      new TextDecoder("utf-8", { fatal: true }).decode(Buffer.concat(chunks)),
+    );
   } catch {
     throw new WorkerError("invalid_json", "Request body is not valid JSON");
   }
@@ -52,6 +45,11 @@ export async function startHttp(
     harnessHomes?: string[];
   },
 ) {
+  ensure(
+    typeof options.token === "string" && options.token.trim().length > 0,
+    "service_token",
+    "A non-empty service token is required",
+  );
   const streams = new Set<ServerResponse>();
   let base = "";
   const server = createServer((req, res) => {
@@ -98,7 +96,7 @@ export async function startHttp(
           return;
         }
         if (req.method === "GET" && url.pathname === "/api/overview")
-          return json(res, controller.overview());
+          return json(res, await controller.pollOverview());
         if (req.method === "GET" && url.pathname === "/api/sessions")
           return json(res, await sessions(options.harnessHomes ?? []));
         if (req.method === "GET" && url.pathname === "/api/events") {
@@ -163,7 +161,12 @@ export async function startHttp(
           const id = decodeURIComponent(match[1]!);
           return json(
             res,
-            match[2] ? controller.recovery(id) : controller.status(id),
+            match[2]
+              ? controller.recovery(id)
+              : await controller.pollStatus(
+                  id,
+                  url.searchParams.get("summary") !== "1",
+                ),
           );
         }
         if (req.method === "POST" && url.pathname === "/api/actions") {

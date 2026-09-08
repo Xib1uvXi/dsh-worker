@@ -1,10 +1,114 @@
 import { expect, it } from "vitest";
 import { chromium } from "@playwright/test";
 import { resolve, join } from "node:path";
-import { mkdirSync } from "node:fs";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { Controller } from "../packages/core/src/controller.js";
 import { startHttp } from "../packages/server/src/http.js";
 import { fixture, FakeRuntime } from "./helpers.js";
+it("preserves the next instruction draft while the previous receipt is pending", async () => {
+  const f = fixture();
+  const c = new Controller({ home: f.home, runtime: new FakeRuntime() });
+  c.prepare(f.ticket);
+  const http = await startHttp(c, {
+    port: 0,
+    token: "b".repeat(64),
+    webDir: resolve("dist/web"),
+  });
+  const browser = await chromium.launch({ headless: true });
+  let release!: () => void;
+  const barrier = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  try {
+    const page = await browser.newPage();
+    page.setDefaultTimeout(5000);
+    let entered!: () => void;
+    const requested = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    await page.route("**/api/actions", async (route) => {
+      const response = await route.fetch();
+      entered();
+      await barrier;
+      await route.fulfill({ response });
+    });
+    await page.goto(http.url + "/#token=" + "b".repeat(64));
+    await page.locator(".task").click();
+    const input = page.getByLabel("追加自然语言指令", { exact: true });
+    await input.fill("First instruction");
+    await page
+      .getByRole("button", { name: "保存执行指令", exact: true })
+      .click();
+    await requested;
+    await input.fill("Second unsent instruction");
+    release();
+    await expect
+      .poll(() =>
+        page
+          .getByRole("button", { name: "保存执行指令", exact: true })
+          .isEnabled(),
+      )
+      .toBe(true);
+    expect(await input.inputValue()).toBe("Second unsent instruction");
+    expect(
+      c.store.get(f.ticket.ticketId).instructions?.map((i) => i.text),
+    ).toEqual(["First instruction"]);
+  } finally {
+    release();
+    await browser.close();
+    await http.close();
+    await c.close();
+  }
+}, 15000);
+it("keeps the latest selected task when detail responses arrive out of order", async () => {
+  const f = fixture();
+  const c = new Controller({ home: f.home, runtime: new FakeRuntime() });
+  c.prepare({ ...f.ticket, ticketId: "RACE-A", title: "Task A" });
+  c.prepare({ ...f.ticket, ticketId: "RACE-B", title: "Task B" });
+  const http = await startHttp(c, {
+    port: 0,
+    token: "b".repeat(64),
+    webDir: resolve("dist/web"),
+  });
+  const browser = await chromium.launch({ headless: true });
+  let release!: () => void;
+  const barrier = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  try {
+    const page = await browser.newPage();
+    page.setDefaultTimeout(5000);
+    let entered!: () => void;
+    const requested = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    await page.route("**/api/tickets/RACE-A", async (route) => {
+      const response = await route.fetch();
+      entered();
+      await barrier;
+      await route.fulfill({ response });
+    });
+    await page.goto(http.url + "/#token=" + "b".repeat(64));
+    await page.locator(".task").filter({ hasText: "Task A" }).click();
+    await requested;
+    await page.locator(".task").filter({ hasText: "Task B" }).click();
+    await page.getByRole("heading", { name: "Task B", exact: true }).waitFor();
+    const completed = page.waitForResponse("**/api/tickets/RACE-A");
+    release();
+    await completed;
+    // A polling refresh must also keep B even when both tasks share state/version.
+    await page.waitForTimeout(3500);
+    expect(await page.locator("#detail-title").textContent()).toBe("Task B");
+    expect(await page.locator("#detail-body").textContent()).toContain(
+      '"ticketId": "RACE-B"',
+    );
+  } finally {
+    release();
+    await browser.close();
+    await http.close();
+    await c.close();
+  }
+}, 15000);
 it("desktop UI creates, verifies and reviews using the same typed controller", async () => {
   const f = fixture();
   const c = new Controller({
@@ -43,7 +147,16 @@ it("desktop UI creates, verifies and reviews using the same typed controller", a
     await page.locator(".task").first().click();
     await page.getByRole("button", { name: "开始实现", exact: true }).click();
     await c.wait(f.ticket.ticketId);
-    await page.getByRole("button", { name: "刷新详情", exact: true }).click();
+    // The already-open dialog must load full evidence when overview changes.
+    await page
+      .getByText("代码差异", { exact: true })
+      .waitFor({ state: "attached" });
+    await page.getByText(/^第 1 次执行/).click();
+    await page.getByText("代码差异", { exact: true }).click();
+    await page.getByText("+implemented", { exact: false }).waitFor();
+    expect(await page.locator("#detail-body").textContent()).toContain(
+      '"path": "source.txt"',
+    );
     await page.getByRole("button", { name: "运行独立验证" }).click();
     await c.wait(f.ticket.ticketId);
     await page.getByRole("button", { name: "刷新详情", exact: true }).click();
@@ -55,6 +168,17 @@ it("desktop UI creates, verifies and reviews using the same typed controller", a
       .getByText("验收通过 · 合并情况未记录", { exact: true })
       .waitFor();
     expect(c.status(f.ticket.ticketId).state).toBe("accepted");
+    // Keep the detail open: polling must display and clear freshness changes.
+    const worktree = c.status(f.ticket.ticketId).worktree;
+    writeFileSync(join(worktree, "source.txt"), "changed after acceptance\n");
+    await page
+      .getByText("工作目录已变化，原验收证据过期", { exact: false })
+      .waitFor({ timeout: 10000 });
+    writeFileSync(join(worktree, "source.txt"), "implemented\n");
+    await page
+      .getByText("工作目录已变化，原验收证据过期", { exact: false })
+      .waitFor({ state: "hidden", timeout: 10000 });
+
     await page.keyboard.press("Escape");
     await page.getByRole("button", { name: "刷新", exact: true }).click();
     mkdirSync(".scratch/typescript-rebuild/browser", { recursive: true });
@@ -311,7 +435,7 @@ it("keeps grouped task navigation, collapsed sections and board navigation usabl
 it("remembers Dashboard authentication across browser sessions and same-home server restarts", async () => {
   const f = fixture();
   const { spawn } = await import("node:child_process");
-  const { existsSync, readFileSync, unlinkSync } = await import("node:fs");
+  const { existsSync, readFileSync } = await import("node:fs");
   const start = async (port: number) => {
     const child = spawn(
       process.execPath,

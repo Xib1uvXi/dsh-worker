@@ -1,18 +1,9 @@
-import {
-  existsSync,
-  mkdirSync,
-  readFileSync,
-  realpathSync,
-  writeFileSync,
-  unlinkSync,
-} from "node:fs";
+import { existsSync, mkdirSync, readFileSync, realpathSync } from "node:fs";
 import { join, resolve } from "node:path";
 import type {
   Attempt,
   Action,
-  Continuation,
   Overview,
-  Review,
   TicketRecord,
   TicketView,
   Verification,
@@ -24,7 +15,11 @@ import {
   reviewSchema,
   continuationSchema,
 } from "../../contracts/src/index.js";
-import { Store } from "./store.js";
+import { runtimeVersion } from "../../runtime/src/version.js";
+import { pruneEphemeral } from "./retention.js";
+import { SnapshotReader } from "./snapshot-reader.js";
+import { ControllerLock } from "./controller-lock.js";
+import { Store, compactRecord } from "./store.js";
 import {
   canonical,
   ensure,
@@ -38,16 +33,10 @@ import {
   capture,
   checkOwnership,
   createWorktree,
+  createCheckoutBaseline,
   validateRepo,
 } from "./git.js";
-import {
-  cleanEnv,
-  discover,
-  execute,
-  terminate,
-  identity,
-  alive,
-} from "./process.js";
+import { cleanEnv, discover, execute, terminate } from "./process.js";
 import type { RuntimeAdapter } from "../../runtime/src/adapter.js";
 import { policyPatch, workflow, workerRole } from "../../runtime/src/policy.js";
 import { deliveryDocument } from "../../runtime/src/delivery.js";
@@ -69,6 +58,8 @@ export class Controller {
     { abort: AbortController; done: Promise<void> }
   >();
   private closing = false;
+  private readonly lock: ControllerLock;
+  private snapshotReader = new SnapshotReader();
   constructor(readonly options: ControllerOptions) {
     mkdirSync(resolve(options.home), { recursive: true, mode: 0o700 });
     this.home = realpathSync(options.home);
@@ -81,43 +72,38 @@ export class Controller {
       "capacity",
       "Capacity must be 1–32",
     );
-    const lock = join(this.home, "controller.lock");
-    if (existsSync(lock)) {
-      const old = JSON.parse(readFileSync(lock, "utf8"));
-      ensure(
-        !alive(old),
-        "controller_running",
-        "A controller already owns this home",
-      );
-      unlinkSync(lock);
-    }
-    const own = identity(process.pid);
-    ensure(own, "identity", "Cannot identify controller process");
-    writeFileSync(lock, JSON.stringify(own), { flag: "wx", mode: 0o600 });
+    this.lock = new ControllerLock(this.home);
+    let store: Store | undefined;
     try {
-      this.store = new Store(this.home);
+      this.store = store = new Store(this.home);
+      // Startup fences incomplete operations. It never sends or retries a prompt.
+      for (const r of this.store.list())
+        if (r.activeOperation)
+          this.store.update(
+            r.ticket.ticketId,
+            "execution.interrupted",
+            (record) => {
+              for (const instruction of record.instructions ?? [])
+                if (instruction.status === "sending") {
+                  instruction.status = "uncertain";
+                  instruction.error = "Controller restarted before receipt";
+                }
+              record.interruptedOperation ??= record.verifications.some(
+                (v) => v.id === record.activeOperation,
+              )
+                ? "verification"
+                : "execution";
+              record.activeOperation = `uncertain:${uid()}`;
+              record.state = "interrupted";
+              record.error =
+                "Controller restarted during an operation; explicit recovery and process accounting required";
+            },
+          );
     } catch (error) {
-      unlinkSync(lock);
+      store?.close();
+      this.lock.close();
       throw error;
     }
-    // Startup fences incomplete operations. It never sends or retries a prompt.
-    for (const r of this.store.list())
-      if (r.activeOperation)
-        this.store.update(
-          r.ticket.ticketId,
-          "execution.interrupted",
-          (record) => {
-            for (const instruction of record.instructions ?? [])
-              if (instruction.status === "sending") {
-                instruction.status = "uncertain";
-                instruction.error = "Controller restarted before receipt";
-              }
-            record.activeOperation = `uncertain:${uid()}`;
-            record.state = "interrupted";
-            record.error =
-              "Controller restarted during an operation; explicit recovery and process accounting required";
-          },
-        );
   }
   private artifactDir() {
     return join(this.home, "artifacts");
@@ -134,8 +120,13 @@ export class Controller {
     ensure(a, "attempt_missing", "No attempt exists");
     return a;
   }
-  private view(r: TicketRecord, detailed = true): TicketView {
-    if (!detailed && r.state !== "accepted") return { ...r, stale: false };
+  private view(r: TicketRecord, detailed = false): TicketView {
+    if (!detailed)
+      return {
+        ...r,
+        stale: false,
+        currentSnapshot: r.attempts.at(-1)?.snapshot?.digest,
+      };
     try {
       const snapshot = capture(r);
       const accepted =
@@ -153,24 +144,77 @@ export class Controller {
       };
     }
   }
-  overview(): Overview {
+  async pollStatus(id: string, details = false): Promise<TicketView> {
+    const stored = this.store.get(id, details);
+    const r = details ? stored : compactRecord(stored);
+    // Running/ready polling has no freshness decision to make.
+    if (
+      !["accepted", "awaiting_review", "blocked", "interrupted"].includes(
+        r.state,
+      )
+    )
+      return { ...r, stale: false };
+    try {
+      const { digest, checkedAt } = await this.snapshotReader.read(r);
+      // Do not present an older operation as current after asynchronous I/O.
+      if (this.store.get(id, false).updatedAt !== r.updatedAt)
+        return this.pollStatus(id, details);
+      return {
+        ...r,
+        stale:
+          r.state === "accepted" && r.reviews.at(-1)?.snapshotDigest !== digest,
+        currentSnapshot: digest,
+        snapshotCheckedAt: checkedAt,
+        snapshotMaxAgeMs: 3000,
+      };
+    } catch (error) {
+      return {
+        ...r,
+        stale: r.state === "accepted",
+        error: `${r.error ?? ""} ${String(error)}`.trim(),
+      };
+    }
+  }
+  async pollOverview(): Promise<Overview> {
     return {
-      tickets: this.store.list().map((r) => this.view(r, false)),
+      ...this.overview(false),
+      tickets: await Promise.all(
+        this.store.list(false).map((r) => this.pollStatus(r.ticket.ticketId)),
+      ),
+    };
+  }
+  overview(fresh = false): Overview {
+    return {
+      tickets: this.store.list(false).map((record) => {
+        const r = compactRecord(record);
+        return fresh ? this.view(r, true) : { ...r, stale: false };
+      }),
       capacity: this.capacity,
       active: this.operations.size,
       dispatchEnabled: this.dispatchEnabled,
       runtimeVersion: this.options.dshBin
         ? "custom executable (version unverified)"
-        : "0.1.3-alpha.2",
+        : runtimeVersion,
     };
   }
   status(id: string) {
-    return this.view(this.store.get(id));
+    return this.view(this.store.get(id), true);
   }
+  async action(
+    input: Extract<Action, { action: "prune" }>,
+  ): Promise<ReturnType<typeof pruneEphemeral>>;
+  async action(
+    input: Exclude<Action, { action: "prune" }>,
+  ): Promise<TicketView>;
+  async action(
+    input: unknown,
+  ): Promise<TicketView | ReturnType<typeof pruneEphemeral>>;
   async action(input: unknown) {
     ensure(!this.closing, "shutting_down", "Controller is shutting down");
     const command = actionSchema.parse(input);
     switch (command.action) {
+      case "prune":
+        return pruneEphemeral(this.home, this.store.list(false), command.days);
       case "instruct":
         return this.instruct(command);
       case "archive": {
@@ -345,6 +389,7 @@ export class Controller {
         worktree,
         owner,
         prepared: false,
+        checkoutBaseline: existing?.checkoutBaseline,
         updatedAt: now(),
         attempts: existing?.attempts ?? [],
         reviews: existing?.reviews ?? [],
@@ -356,7 +401,13 @@ export class Controller {
       return r;
     });
     try {
-      createWorktree(record);
+      if (createWorktree(record)) {
+        const baseline = createCheckoutBaseline(record, this.artifactDir());
+        this.store.update(ticket.ticketId, "ticket.baseline", (r) => {
+          r.checkoutBaseline = baseline;
+        });
+        record.checkoutBaseline = baseline;
+      }
       const baseline = capture(record, this.artifactDir());
       ensure(
         !baseline.violations.length,
@@ -482,7 +533,7 @@ export class Controller {
       delete record.error;
     });
     const abort = new AbortController();
-    const done = (async () => {
+    const done = Promise.resolve().then(async () => {
       try {
         const result = await this.options.runtime.execute(
           {
@@ -534,11 +585,23 @@ export class Controller {
               });
           },
           (processes) => {
+            if (
+              canonical(this.current(this.store.get(id, false)).processes) ===
+              canonical(processes)
+            )
+              return;
             this.store.update(id, "attempt.processes", (record) => {
               this.current(record).processes = processes;
             });
           },
         );
+        let snapshot: Attempt["snapshot"];
+        let snapshotError: unknown;
+        try {
+          snapshot = capture(this.store.get(id), this.artifactDir());
+        } catch (error) {
+          snapshotError = error;
+        }
         this.store.update(id, "attempt.settled", (record) => {
           const a = this.current(record);
           a.endedAt = now();
@@ -552,11 +615,9 @@ export class Controller {
               i.status = result.receipt ? "received" : "uncertain";
             }
           if (result.cleanExit) delete record.activeOperation;
-          try {
-            a.snapshot = capture(record, this.artifactDir());
-          } catch (error) {
-            a.error = `${a.error ?? ""} Snapshot: ${String(error)}`;
-          }
+          a.snapshot = snapshot;
+          if (snapshotError)
+            a.error = `${a.error ?? ""} Snapshot: ${String(snapshotError)}`;
           try {
             a.delivery = deliverySchema.parse(
               deliveryDocument(result.finalResponse ?? ""),
@@ -606,7 +667,7 @@ export class Controller {
       } finally {
         this.operations.delete(id);
       }
-    })();
+    });
     this.operations.set(id, { abort, done });
     return this.status(id);
   }
@@ -684,6 +745,8 @@ export class Controller {
               cmd.timeoutSeconds,
               verification.marker,
               (processes) => {
+                if (canonical(verification.processes) === canonical(processes))
+                  return;
                 verification.processes = processes;
                 this.store.update(id, "verification.processes", (record) => {
                   record.verifications.at(-1)!.processes = processes;
@@ -724,6 +787,7 @@ export class Controller {
       } catch (error) {
         this.store.update(id, "verification.failed", (record) => {
           record.state = "interrupted";
+          record.interruptedOperation = "verification";
           record.error = String(error);
           const failed = record.verifications.find(
             (v) => v.id === verification.id,
@@ -741,8 +805,9 @@ export class Controller {
   }
   review(input: unknown) {
     const review = reviewSchema.parse(input);
-    return this.store.transaction(() => {
-      const r = this.store.get(review.ticketId);
+    const r = this.store.get(review.ticketId);
+    const snapshot = capture(r, this.artifactDir());
+    this.store.transaction(() => {
       this.idle(r);
       ensure(
         r.state === "awaiting_review",
@@ -755,7 +820,6 @@ export class Controller {
         "review_binding",
         "Review does not match current attempt",
       );
-      const snapshot = capture(r, this.artifactDir());
       ensure(
         a.snapshot?.digest === review.snapshotDigest &&
           snapshot.digest === review.snapshotDigest,
@@ -770,16 +834,14 @@ export class Controller {
           "review_evidence",
           "Delivery cannot be accepted",
         );
+        const verification = r.verifications.findLast(
+          (v) => v.attemptId === a.id && v.revision === r.ticket.revision,
+        );
         ensure(
-          r.verifications.some(
-            (v) =>
-              v.attemptId === a.id &&
-              v.revision === r.ticket.revision &&
-              v.passed &&
-              v.cleanExit &&
-              v.before === snapshot.digest &&
-              v.after === snapshot.digest,
-          ),
+          verification?.passed &&
+            verification.cleanExit &&
+            verification.before === snapshot.digest &&
+            verification.after === snapshot.digest,
           "verification_required",
           "Independent controller verification of this snapshot must pass",
         );
@@ -792,12 +854,12 @@ export class Controller {
             ? "changes_requested"
             : "blocked";
       this.store.save(r, "review.recorded", review);
-      return this.view(r);
     });
+    return this.view(r);
   }
   recovery(id: string) {
     const r = this.store.get(id);
-    const snapshot = capture(r, this.artifactDir());
+    const snapshot = capture(r);
     const uncertain = [
       ...r.attempts.filter((a) => !a.cleanExit),
       ...r.verifications.filter((v) => !v.cleanExit),
@@ -874,7 +936,19 @@ export class Controller {
           }
           delete record.activeOperation;
           record.continuations.push(c);
-          record.state = "ready";
+          const delivered = record.attempts.at(-1);
+          const resumeVerification =
+            record.interruptedOperation === "verification" &&
+            delivered?.revision === record.ticket.revision &&
+            delivered.receipt &&
+            delivered.finishReason === "completed" &&
+            delivered.termination === "completed" &&
+            delivered.delivery?.outcome === "submitted" &&
+            !delivered.delivery.blockers.length &&
+            delivered.snapshot?.digest === c.snapshotDigest &&
+            !delivered.snapshot.violations.length;
+          record.state = resumeVerification ? "awaiting_review" : "ready";
+          delete record.interruptedOperation;
           delete record.error;
         });
         return this.status(c.ticketId);
@@ -905,7 +979,8 @@ export class Controller {
     this.closing = true;
     for (const op of this.operations.values()) op.abort.abort();
     await Promise.all([...this.operations.values()].map((op) => op.done));
+    await this.snapshotReader.close();
     this.store.close();
-    unlinkSync(join(this.home, "controller.lock"));
+    this.lock.close();
   }
 }

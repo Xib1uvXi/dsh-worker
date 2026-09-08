@@ -1,3 +1,4 @@
+import { trajectoryLabel } from "./labels.js";
 import type {
   TrajectoryPage,
   TrajectoryEntry,
@@ -24,7 +25,7 @@ export function agentCard(a: AgentActivity) {
       "strong",
       `${a.parentSessionId ? "↳ 子 Agent" : "◈ Worker"} · ${labels[a.status]}`,
     ),
-    node("p", a.action),
+    node("p", trajectoryLabel(a.action)),
     node(
       "small",
       `${a.sessionId} · ${new Date(a.updatedAt).toLocaleTimeString()}`,
@@ -96,7 +97,7 @@ export function mountTrajectory(
         (!attempt.value || e.attemptId === attempt.value) &&
         (!session.value || e.sessionId === session.value) &&
         e.kind.startsWith(filter.value) &&
-        `${e.title} ${e.text}`
+        `${trajectoryLabel(e.title)} ${e.text}`
           .toLowerCase()
           .includes(search.value.toLowerCase()),
     );
@@ -108,7 +109,7 @@ export function mountTrajectory(
         d.open = expanded.has(e.seq);
         const s = node(
           "summary",
-          `${new Date(e.time).toLocaleTimeString()} · ${e.title}${e.callId ? ` · ${e.callId}` : ""}`,
+          `${new Date(e.time).toLocaleTimeString()} · ${trajectoryLabel(e.title)}${e.callId ? ` · ${e.callId}` : ""}`,
         );
         const meta = node(
           "small",
@@ -147,7 +148,7 @@ export function mountTrajectory(
               ? "│"
               : "●",
         );
-        b.title = `${e.seq} · ${e.title}`;
+        b.title = `${e.seq} · ${trajectoryLabel(e.title)}`;
         b.setAttribute("aria-label", b.title);
         b.onclick = () => {
           const target = list.querySelector<HTMLDetailsElement>(

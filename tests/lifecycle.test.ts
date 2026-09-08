@@ -1,14 +1,56 @@
 import { expect, it } from "vitest";
 import { spawn, fork, execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, writeFileSync, mkdirSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { Controller } from "../packages/core/src/controller.js";
-import { Store } from "../packages/core/src/store.js";
-import { SdkRuntime } from "../packages/runtime/src/adapter.js";
 import { delay } from "../packages/core/src/util.js";
 import { fixture, FakeRuntime } from "./helpers.js";
 import { marked } from "../packages/core/src/process.js";
+import type { Context } from "@deepseek-ai/cordis";
+import { apply } from "../packages/server/src/plugin.js";
+
+it("releases the listener, discovery and controller when onReady throws", async () => {
+  const f = fixture();
+  let start!: () => Promise<unknown>;
+  let provided = false;
+  let url = "";
+  let reported: unknown;
+  const failure = new Error("embedding startup failed");
+  const ctx = {
+    effect: (effect: typeof start) => {
+      start = effect;
+    },
+    provide: () => {
+      provided = true;
+      return () => {
+        provided = false;
+      };
+    },
+  } as unknown as Context;
+  apply(ctx, {
+    home: f.home,
+    port: 0,
+    runtime: new FakeRuntime(),
+    onReady: (address) => {
+      url = address;
+      throw failure;
+    },
+    onError: (error) => {
+      reported = error;
+    },
+  });
+  await expect(start()).rejects.toBe(failure);
+  expect(reported).toBe(failure);
+  expect(provided).toBe(false);
+  expect(existsSync(join(f.home, "service.json"))).toBe(false);
+  await expect(fetch(url)).rejects.toThrow();
+  const replacement = new Controller({
+    home: f.home,
+    runtime: new FakeRuntime(),
+  });
+  await replacement.close();
+});
 it("refuses a second controller instead of fencing the active owner", async () => {
   const f = fixture();
   const first = new Controller({ home: f.home, runtime: new FakeRuntime() });
@@ -130,3 +172,79 @@ it("fences a real controller crash, accounts for inherited writers, and never re
     await recovered?.close();
   }
 }, 25000);
+it("a rejected service contender cannot issue a token before acquiring the home lock", async () => {
+  const f = fixture();
+  const first = new Controller({ home: f.home, runtime: new FakeRuntime() });
+  try {
+    await expect(
+      promisify(execFile)(process.execPath, [
+        resolve("dist/cli.js"),
+        "serve",
+        "--port",
+        "0",
+        "--home",
+        f.home,
+      ]),
+    ).rejects.toMatchObject({ code: 1 });
+    expect(existsSync(join(f.home, "service-token"))).toBe(false);
+    expect(existsSync(join(f.home, "service.json"))).toBe(false);
+  } finally {
+    await first.close();
+  }
+});
+
+it("allows only one controller when two contenders reclaim the same dead owner", async () => {
+  const f = fixture();
+  mkdirSync(f.home, { recursive: true });
+  writeFileSync(
+    join(f.home, "controller.lock"),
+    JSON.stringify({ pid: 99999999, start: "dead-fixture" }),
+  );
+  const children: ReturnType<typeof fork>[] = [];
+  const exits: Promise<void>[] = [];
+  async function waitFor(check: () => boolean) {
+    for (let i = 0; i < 500 && !check(); i++) await delay(10);
+    expect(check(), "contender barrier").toBe(true);
+  }
+  function start(role: string) {
+    const child = fork(
+      resolve("tests/fixtures/lock-contender.mjs"),
+      [f.home, f.root, role],
+      {
+        stdio: ["ignore", "pipe", "pipe", "ipc"],
+        execArgv: [],
+      },
+    );
+    children.push(child);
+    exits.push(new Promise<void>((r) => child.once("exit", () => r())));
+    let outcome: { opened: boolean; error?: string } | undefined;
+    child.once("message", (message) => {
+      outcome = message as typeof outcome;
+    });
+    return () => outcome;
+  }
+  try {
+    const a = start("a");
+    await waitFor(() => existsSync(join(f.root, "a-paused")));
+    const b = start("b");
+    await waitFor(() => !!b() || existsSync(join(f.root, "b-paused")));
+    writeFileSync(join(f.root, "b-resume"), "");
+    await waitFor(() => !!b());
+    writeFileSync(join(f.root, "a-resume"), "");
+    await waitFor(() => !!a());
+    expect([a(), b()].filter((r) => r?.opened)).toHaveLength(1);
+  } finally {
+    for (const role of ["a", "b"])
+      writeFileSync(join(f.root, role + "-resume"), "");
+    for (const child of children)
+      if (child.exitCode === null && child.signalCode === null)
+        child.kill("SIGKILL");
+    await Promise.all(exits);
+  }
+  // The OS releases ownership on a crash, without requiring a graceful close.
+  const recovered = new Controller({
+    home: f.home,
+    runtime: new FakeRuntime(),
+  });
+  await recovered.close();
+}, 20000);

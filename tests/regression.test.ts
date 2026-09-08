@@ -1,12 +1,12 @@
 import { afterEach, expect, it } from "vitest";
 import { join, resolve } from "node:path";
-import { writeFileSync, readFileSync, symlinkSync } from "node:fs";
+import { writeFileSync, symlinkSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { Controller } from "../packages/core/src/controller.js";
 import { capture } from "../packages/core/src/git.js";
 import { fixture, FakeRuntime } from "./helpers.js";
 import { delivery } from "./helpers.js";
-import { workflow, workerPolicy } from "../packages/runtime/src/policy.js";
+import { workflow } from "../packages/runtime/src/policy.js";
 import { startHttp } from "../packages/server/src/http.js";
 const controllers: Controller[] = [];
 afterEach(async () => {
@@ -33,6 +33,7 @@ it("allows two independent attempts, rejects capacity overflow, preserves both c
   s.c.run("A");
   s.c.run("B");
   expect(() => s.c.run("C")).toThrow(/capacity/);
+  await expect.poll(() => releases.length).toBe(2);
   for (const release of releases) release();
   await Promise.all([s.c.wait("A"), s.c.wait("B")]);
   expect(s.c.status("A").state).toBe("awaiting_review");
@@ -183,4 +184,92 @@ it("detects and exposes an out-of-scope index-only change", () => {
   const snapshot = capture(t);
   expect(snapshot.violations).toContain("Out of scope: source.txt");
   expect(snapshot.indexDiff).toContain("hidden staged content");
+});
+it("recovers interrupted verification to the unchanged delivery without another model attempt", async () => {
+  const s = setup();
+  s.c.prepare(s.ticket);
+  s.c.run(s.ticket.ticketId);
+  const delivered = await s.c.wait(s.ticket.ticketId);
+  s.c.store.update(s.ticket.ticketId, "synthetic.verifier-crash", (r) => {
+    r.activeOperation = "verify-crash";
+    r.verifications.push({
+      id: "verify-crash",
+      attemptId: delivered.attempts[0]!.id,
+      revision: 1,
+      startedAt: new Date().toISOString(),
+      before: delivered.currentSnapshot!,
+      passed: false,
+      cleanExit: false,
+      processes: [],
+      marker: delivered.attempts[0]!.marker,
+      commands: [],
+    });
+  });
+  await s.c.close();
+  controllers.splice(controllers.indexOf(s.c), 1);
+  const reopened = new Controller({
+    home: s.home,
+    runtime: s.runtime,
+    dispatchEnabled: true,
+  });
+  controllers.push(reopened);
+  expect(reopened.status(s.ticket.ticketId).interruptedOperation).toBe(
+    "verification",
+  );
+  const info = reopened.recovery(s.ticket.ticketId);
+  const recovered = await reopened.recover({
+    ticketId: s.ticket.ticketId,
+    revision: 1,
+    attemptId: delivered.attempts[0]!.id,
+    snapshotDigest: info.snapshotDigest,
+    instruction: "Rerun verification",
+  });
+  expect(recovered.state).toBe("awaiting_review");
+  expect(recovered.verifications[0]?.passed).toBe(false);
+  reopened.verify(s.ticket.ticketId);
+  expect(
+    (await reopened.wait(s.ticket.ticketId)).verifications.at(-1)?.passed,
+  ).toBe(true);
+  expect(s.runtime.count).toBe(1);
+});
+it("keeps snapshot details out of ticket rewrites and summary polling while retaining exact evidence", async () => {
+  const s = setup();
+  s.c.prepare(s.ticket);
+  s.c.run(s.ticket.ticketId);
+  const full = await s.c.wait(s.ticket.ticketId);
+  const row = s.c.store.db.prepare("SELECT data FROM tickets").get() as {
+    data: string;
+  };
+  expect(JSON.parse(row.data).attempts[0].snapshot.detailsOmitted).toBe(true);
+  expect(JSON.parse(row.data).attempts[0].snapshot.files).toEqual([]);
+  expect(s.c.store.get(s.ticket.ticketId).attempts[0]?.snapshot).toEqual(
+    full.attempts[0]?.snapshot,
+  );
+  const before = s.c.store.events().length;
+  const compact = await s.c.pollStatus(s.ticket.ticketId);
+  expect(compact.attempts[0]?.snapshot?.files).toEqual([]);
+  expect(compact.currentSnapshot).toBe(full.currentSnapshot);
+  expect(s.c.store.events().length).toBe(before);
+});
+it("compacts legacy inline snapshots without losing evidence on the next state write", async () => {
+  const s = setup();
+  s.c.prepare(s.ticket);
+  s.c.run(s.ticket.ticketId);
+  const full = await s.c.wait(s.ticket.ticketId);
+  s.c.store.db
+    .prepare("UPDATE tickets SET data=? WHERE id=?")
+    .run(JSON.stringify(full), s.ticket.ticketId);
+  s.c.store.db.exec("DELETE FROM snapshots");
+  expect(
+    (await s.c.pollStatus(s.ticket.ticketId)).attempts[0]?.snapshot?.files,
+  ).toEqual([]);
+  expect(s.c.store.get(s.ticket.ticketId).attempts[0]?.snapshot).toEqual(
+    full.attempts[0]?.snapshot,
+  );
+  s.c.store.update(s.ticket.ticketId, "ticket.archived", (r) => {
+    r.archived = true;
+  });
+  expect(s.c.store.get(s.ticket.ticketId).attempts[0]?.snapshot).toEqual(
+    full.attempts[0]?.snapshot,
+  );
 });

@@ -1,0 +1,99 @@
+import assert from "node:assert/strict";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
+import { createRequire } from "node:module";
+import {
+  mkdtempSync,
+  writeFileSync,
+  readdirSync,
+  renameSync,
+  rmSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join, resolve } from "node:path";
+
+const exec = promisify(execFile);
+const source = resolve(".");
+const consumer = mkdtempSync(join(tmpdir(), "dsh-package-smoke-"));
+const run = (command: string, args: string[], cwd = consumer) =>
+  exec(command, args, { cwd, timeout: 180000, maxBuffer: 8 * 1024 * 1024 });
+let passed = false;
+try {
+  const packed = JSON.parse(
+    (
+      await run(
+        "npm",
+        ["pack", "--json", "--pack-destination", consumer],
+        source,
+      )
+    ).stdout,
+  ) as { filename: string }[];
+  writeFileSync(
+    join(consumer, "package.json"),
+    JSON.stringify({ private: true, type: "module" }),
+  );
+  // Honor the user's npm script policy. A script-disabled install must not be
+  // treated as evidence that the released native runtime is usable.
+  await run("npm", [
+    "install",
+    "--no-audit",
+    "--no-fund",
+    ...(process.argv.includes("--offline") ? ["--offline"] : []),
+    join(consumer, packed[0]!.filename),
+  ]);
+  const entry = join(consumer, "node_modules/@dsh-worker/worker/dist/cli.js");
+  const home = join(consumer, "doctor-home");
+  const doctor = () => run(process.execPath, [entry, "doctor", "--home", home]);
+  for (let i = 0; i < 2; i++) {
+    const result = JSON.parse((await doctor()).stdout);
+    assert.equal(result.initialized, true);
+    assert.equal(result.closed, true);
+    assert.equal(result.modelCalls, 0);
+    assert.deepEqual(readdirSync(join(home, "doctor")), []);
+  }
+  await run(process.execPath, [
+    "--input-type=module",
+    "-e",
+    'const m=await import("@dsh-worker/worker"); for(const key of ["Controller","SdkRuntime","WorkerClient"]) if(typeof m[key]!=="function") throw new Error(key);',
+  ]);
+  // Remove only this disposable installation's native binding to reproduce
+  // --ignore-scripts without affecting the development checkout.
+  const sdk = createRequire(
+    createRequire(entry).resolve("@deepseek-ai/dsh-sdk-client"),
+  );
+  const runtime = createRequire(sdk.resolve("@deepseek-ai/dsh/package.json"));
+  const persistence = createRequire(
+    runtime.resolve("@deepseek-ai/dsh-session-persistence-jsonl"),
+  );
+  const binding = join(
+    dirname(persistence.resolve("fs-ext")),
+    "build/Release/fs_ext.node",
+  );
+  renameSync(binding, binding + ".saved");
+  try {
+    await assert.rejects(doctor(), (error: unknown) => {
+      const failure = error as { code: number; stderr: string };
+      assert.equal(failure.code, 1);
+      const diagnostic = JSON.parse(failure.stderr);
+      assert.equal(diagnostic.code, "runtime_dependencies");
+      assert.match(diagnostic.error, /fs_ext\.node/);
+      assert.match(diagnostic.error, /npm rebuild fs-ext/);
+      return true;
+    });
+  } finally {
+    renameSync(binding + ".saved", binding);
+  }
+  assert.equal(JSON.parse((await doctor()).stdout).initialized, true);
+  passed = true;
+  console.log(
+    JSON.stringify({
+      installedDoctorRuns: 3,
+      missingNativeDiagnostic: "passed",
+      publicExports: "passed",
+      modelCalls: 0,
+    }),
+  );
+} finally {
+  if (passed) rmSync(consumer, { recursive: true, force: true });
+  else console.error(`Package smoke evidence retained at ${consumer}`);
+}

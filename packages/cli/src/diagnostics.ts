@@ -2,7 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { ZodError } from "zod";
 import type { TicketView } from "../../contracts/src/index.js";
-import { alive } from "../../core/src/process.js";
+import { alive } from "../../shared/src/process.js";
 import { workflow } from "../../runtime/src/policy.js";
 import { ClientError, WorkerClient } from "./client.js";
 
@@ -317,7 +317,7 @@ export async function health(home: string) {
       message: errorInfo(error).error,
     });
   }
-  const lock = join(home, "service.lock");
+  const lock = join(home, "controller.lock");
   if (existsSync(lock)) {
     try {
       const owner = JSON.parse(readFileSync(lock, "utf8"));
@@ -342,7 +342,7 @@ export async function health(home: string) {
         status: "fail",
         code: "service_lock",
         message:
-          "Cannot validate service process identity; inspect service.lock.",
+          "Cannot validate service process identity; inspect controller.lock.",
       });
     }
   } else
@@ -350,7 +350,7 @@ export async function health(home: string) {
       name: "owner",
       status: "warn",
       message:
-        "No service.lock is present; process ownership cannot be confirmed.",
+        "No controller.lock is present; process ownership cannot be confirmed.",
     });
   if (client)
     try {

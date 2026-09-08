@@ -3,7 +3,7 @@ import { dirname, join, resolve } from "node:path";
 import { homedir } from "node:os";
 import YAML from "yaml";
 import { workflowSchema } from "../../contracts/src/index.js";
-import { atomic, ensure, hash } from "../../core/src/util.js";
+import { atomic, ensure, hash } from "../../shared/src/util.js";
 
 export const workerPolicy = [
   { id: "approval", config: { policy: "never" } },

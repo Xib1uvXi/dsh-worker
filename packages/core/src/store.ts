@@ -1,7 +1,11 @@
 import { DatabaseSync } from "node:sqlite";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
-import type { JournalEvent, TicketRecord } from "../../contracts/src/index.js";
+import type {
+  JournalEvent,
+  TicketRecord,
+  Snapshot,
+} from "../../contracts/src/index.js";
 import { ensure, now, canonical } from "./util.js";
 
 export class Store {
@@ -22,6 +26,7 @@ export class Store {
     );
     this.db
       .exec(`CREATE TABLE IF NOT EXISTS tickets (id TEXT PRIMARY KEY, data TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS snapshots (digest TEXT PRIMARY KEY, data TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS revisions (id TEXT NOT NULL, revision INTEGER NOT NULL, data TEXT NOT NULL, PRIMARY KEY(id,revision));
       CREATE TABLE IF NOT EXISTS journal (seq INTEGER PRIMARY KEY AUTOINCREMENT, time TEXT NOT NULL, ticket_id TEXT NOT NULL, type TEXT NOT NULL, data TEXT NOT NULL);
       CREATE INDEX IF NOT EXISTS journal_ticket_seq ON journal(ticket_id,seq);
@@ -38,30 +43,67 @@ export class Store {
       throw error;
     }
   }
-  list(): TicketRecord[] {
+  private hydrate(record: TicketRecord, details: boolean) {
+    if (details)
+      for (const a of record.attempts)
+        if (a.snapshot?.detailsOmitted) {
+          const row = this.db
+            .prepare("SELECT data FROM snapshots WHERE digest=?")
+            .get(a.snapshot.digest) as { data: string } | undefined;
+          ensure(row, "snapshot_missing", "Snapshot evidence is missing");
+          a.snapshot = JSON.parse(row.data) as Snapshot;
+        }
+    return record;
+  }
+  list(details = true): TicketRecord[] {
     return (
       this.db.prepare("SELECT data FROM tickets ORDER BY id").all() as {
         data: string;
       }[]
-    ).map((r) => JSON.parse(r.data) as TicketRecord);
+    ).map((r) => this.hydrate(JSON.parse(r.data) as TicketRecord, details));
   }
-  get(id: string): TicketRecord {
+  get(id: string, details = true): TicketRecord {
     const row = this.db
       .prepare("SELECT data FROM tickets WHERE id=?")
       .get(id) as { data: string } | undefined;
     ensure(row, "not_found", `Unknown ticket ${id}`);
-    return JSON.parse(row.data) as TicketRecord;
+    return this.hydrate(JSON.parse(row.data) as TicketRecord, details);
   }
   has(id: string) {
     return !!this.db.prepare("SELECT 1 FROM tickets WHERE id=?").get(id);
   }
   save(record: TicketRecord, type: string, data: unknown = {}) {
     record.updatedAt = now();
+    const compact = {
+      ...record,
+      attempts: record.attempts.map((a) => {
+        const snapshot = a.snapshot;
+        if (!snapshot || snapshot.detailsOmitted) return a;
+        if (
+          !this.db
+            .prepare("SELECT 1 FROM snapshots WHERE digest=?")
+            .get(snapshot.digest)
+        )
+          this.db
+            .prepare("INSERT INTO snapshots VALUES (?,?)")
+            .run(snapshot.digest, JSON.stringify(snapshot));
+        return {
+          ...a,
+          snapshot: {
+            ...snapshot,
+            files: [],
+            diff: "",
+            indexDiff: undefined,
+            detailsOmitted: true,
+          },
+        };
+      }),
+    };
     this.db
       .prepare(
         "INSERT INTO tickets VALUES (?,?) ON CONFLICT(id) DO UPDATE SET data=excluded.data",
       )
-      .run(record.ticket.ticketId, JSON.stringify(record));
+      .run(record.ticket.ticketId, JSON.stringify(compact));
     this.event(record.ticket.ticketId, type, data);
   }
   revision(record: TicketRecord) {
@@ -82,7 +124,7 @@ export class Store {
   }
   update<T>(id: string, type: string, fn: (record: TicketRecord) => T): T {
     return this.transaction(() => {
-      const r = this.get(id);
+      const r = this.get(id, false);
       const result = fn(r);
       this.save(r, type);
       return result;
@@ -130,4 +172,25 @@ export class Store {
   close() {
     this.db.close();
   }
+}
+
+// Pure transport projection, separate from Store.update's raw legacy reads.
+export function compactRecord(record: TicketRecord): TicketRecord {
+  return {
+    ...record,
+    attempts: record.attempts.map((a) =>
+      a.snapshot
+        ? {
+            ...a,
+            snapshot: {
+              ...a.snapshot,
+              files: [],
+              diff: "",
+              indexDiff: undefined,
+              detailsOmitted: true,
+            },
+          }
+        : a,
+    ),
+  };
 }

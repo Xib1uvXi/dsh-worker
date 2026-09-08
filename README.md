@@ -13,7 +13,7 @@ This is the Node implementation (schema 2); it requires no Python interpreter or
 
 ## Quick start
 
-Requires **Node 24.18 or newer**, npm and Git on macOS or Linux. macOS arm64 is the validated development platform; Linux still needs separate platform verification.
+Requires **Node 24.18 or newer**, npm and Git **2.43 or newer** on macOS or Linux. macOS arm64 is the validated development platform; Linux still needs separate platform verification.
 
 From a source checkout:
 
@@ -74,18 +74,18 @@ node dist/cli.js help
 
 `skill` returns portable instructions, their file path and the examples directory. An installed package exposes the same commands as `dsh-worker`. No protocol server or client registration is required.
 
-| Action | Command after package installation |
-| --- | --- |
-| Check service health | `dsh-worker health` |
-| List tasks | `dsh-worker list --summary` |
-| Inspect task evidence | `dsh-worker status TASK-01` |
-| Wait for a task | `dsh-worker wait TASK-01 --timeout 300` |
+| Action                            | Command after package installation                                                                        |
+| --------------------------------- | --------------------------------------------------------------------------------------------------------- |
+| Check service health              | `dsh-worker health`                                                                                       |
+| List tasks                        | `dsh-worker list --summary`                                                                               |
+| Inspect task evidence             | `dsh-worker status TASK-01`                                                                               |
+| Wait for a task                   | `dsh-worker wait TASK-01 --timeout 300`                                                                   |
 | Send a revision-bound instruction | `dsh-worker instruct TASK-01 --instruction-file message.txt --revision 1 --instruction-id TASK-01-note-1` |
-| Inspect historical errors | `dsh-worker errors TASK-01` |
-| Get recovery guidance | `dsh-worker diagnose TASK-01` |
-| Inspect an interrupted task | `dsh-worker recover TASK-01` |
-| Retrieve a verified snapshot file | `dsh-worker artifact SHA256 --output FILE` |
-| Archive or restore an idle task | `dsh-worker archive TASK-01` / `dsh-worker restore TASK-01` |
+| Inspect historical errors         | `dsh-worker errors TASK-01`                                                                               |
+| Get recovery guidance             | `dsh-worker diagnose TASK-01`                                                                             |
+| Inspect an interrupted task       | `dsh-worker recover TASK-01`                                                                              |
+| Retrieve a verified snapshot file | `dsh-worker artifact SHA256 --output FILE`                                                                |
+| Archive or restore an idle task   | `dsh-worker archive TASK-01` / `dsh-worker restore TASK-01`                                               |
 
 From a checkout, substitute `node dist/cli.js` for `dsh-worker`. Data commands return structured JSON. `prepare`, `review`, `recover` and JSON-form `instruct` accept `--file -`; text instructions accept `--instruction-file -`. Reuse stable instruction IDs for retries. Uncertain delivery is never automatically replayed, and a wait timeout does not cancel execution. Artifact retrieval refuses to overwrite an existing file.
 
@@ -109,18 +109,21 @@ node dist/cli.js workflow
 
 A completed model turn is eligible for review only after the controller observes a durable receipt, raw `completed` reason, correctly bound delivery, complete in-scope snapshot and owned process cleanup. Receipt, idle, exit zero and natural-language claims alone cannot promote an attempt. Missing or invalid delivery remains interrupted; blocked delivery returns its blockers.
 
-Acceptance requires external Spec/Standards decisions and passing controller-run verification of the unchanged snapshot. Verification that changes files cannot validate the old delivery. Later changes mark accepted evidence stale.
+Acceptance requires external Spec/Standards decisions and the latest controller-run verification for the current attempt and revision to pass on the unchanged snapshot. A newer failed verification invalidates an earlier pass. Verification that changes files cannot validate the old delivery. Later changes mark accepted evidence stale. Dashboard freshness checks are asynchronous and may lag by up to three seconds; acceptance always checks the current files directly.
 
-The service owns a process-identity lock, SQLite state and child executions. A ticket cannot execute, verify and recover concurrently. Cancellation closes the SDK runtime and accounts for detached descendants; a crash never causes automatic resend. `recover ID` only inspects. An explicit continuation supplied with `recover --file continuation.json` accounts for old writers and returns the ticket to ready without starting a model.
+The service owns a process-identity lock, SQLite state and child executions. A ticket cannot execute, verify and recover concurrently. Cancellation closes the SDK runtime and accounts for detached descendants; a crash never causes automatic resend. `recover ID` only inspects. An explicit continuation supplied with `recover --file continuation.json` accounts for old writers and returns the ticket to ready without starting a model. Interrupted verification with an unchanged valid delivery instead returns to awaiting review so verification can be rerun.
 
 SQLite and its journal are authoritative; artifact files are immutable and content-addressed. Snapshots cover tracked and non-ignored untracked files, deletions, binary content, modes, symlink targets, Git HEAD and staged state. Ignored build outputs are not deliverables; files over 32 MiB and unsupported submodules block snapshot creation. Scope is checked against the assigned base. Worktrees provide cooperative workspace separation, not containment against malicious code running under your OS account.
 
 ## Development and verification
 
 ```sh
-# Install the test browser once, then run type checking, build and tests.
+# Install the test browser once, then run lint, type checking, build and tests.
 npx playwright install chromium
 npm run check
+
+# Verify a fresh tarball install and its real doctor (zero model calls).
+npm run test:package
 
 # Build the distributable package after successful checks.
 npm pack
@@ -129,16 +132,19 @@ npm install /path/to/dsh-worker-worker-0.2.0.tgz
 npx dsh-worker help
 ```
 
+`npm run lint` checks maintained TypeScript, JavaScript fixtures and root configuration with ESLint. It catches unused code, unsafe Promise usage and Node-only globals/imports in browser modules. `npm run lint:fix` applies available automatic fixes; remaining diagnostics require an edit. Both commands fail on warnings. Generated `dist`, coverage, dependencies and personal `.scratch` files are excluded. Prettier remains the separate `npm run format:check` formatting check. `npm run check` runs lint before type checking, build and tests.
+
 `npm test` builds first, then runs real Git/SQLite/process regressions, public-SDK wire fixtures, CLI lifecycle and desktop Chromium interaction checks. The deterministic SDK fixture is not a real model. The [verification record](docs/verification.md) documents completed checks, real-task evidence and remaining boundaries.
 
-| Directory | Responsibility |
-| --- | --- |
-| `packages/contracts` | Zod validation, commands, states and browser-safe types |
-| `packages/core` | Durable control state, Git ownership, evidence, verification and review |
-| `packages/runtime` | Official TypeScript SDK adapter, isolated execution process, policy and workflow patches |
-| `packages/server` | Cordis lifecycle plugin, authenticated loopback HTTP, replayable events and session-header observation |
-| `packages/cli` | CLI client of the control service |
-| `packages/web` | Desktop task management and execution trajectories |
+| Directory            | Responsibility                                                                                         |
+| -------------------- | ------------------------------------------------------------------------------------------------------ |
+| `packages/shared`    | Node filesystem/process primitives, with no controller/client dependencies                             |
+| `packages/contracts` | Zod validation, commands, states and browser-safe types                                                |
+| `packages/core`      | Durable control state, Git ownership, evidence, verification and review                                |
+| `packages/runtime`   | Official TypeScript SDK adapter, isolated execution process, policy and workflow patches               |
+| `packages/server`    | Cordis lifecycle plugin, authenticated loopback HTTP, replayable events and session-header observation |
+| `packages/cli`       | CLI client of the control service                                                                      |
+| `packages/web`       | Desktop task management and execution trajectories                                                     |
 
 Runtime behavior uses the official `dsh --profile sdk` launcher and ordered patches, with the worker policy applied last. There is no Harness core fork or replacement model loop. See [Architecture](docs/architecture.md) for persistence, process ownership and interface details.
 
@@ -146,17 +152,21 @@ Runtime behavior uses the official `dsh --profile sdk` launcher and ordered patc
 
 ## Documentation
 
-| Guide | Use it for |
-| --- | --- |
-| [Getting started](docs/getting-started.md) | Installation, credentials, Dashboard login and the first reviewed task |
-| [Bundled orchestrator skill](skill/SKILL.md) | Assignment handoff and the CLI review loop |
-| [Skill configuration](docs/skills.md) | Optional worker skills and instruction files |
-| [CLI troubleshooting](docs/troubleshooting.md) | Error codes, failed verification, historical attempts and safe recovery |
-| [Architecture](docs/architecture.md) | Components, durable contracts and upstream source basis |
-| [Project workflow](docs/agents/domain.md) | Repository guidance, local task tracking, domain context and decision records |
-| [Verification record](docs/verification.md) | Recorded checks and the limits of their evidence |
-| [Migration](docs/migration.md) | Python-to-TypeScript and CLI + Skill compatibility |
+| Guide                                          | Use it for                                                                    |
+| ---------------------------------------------- | ----------------------------------------------------------------------------- |
+| [Getting started](docs/getting-started.md)     | Installation, credentials, Dashboard login and the first reviewed task        |
+| [Bundled orchestrator skill](skill/SKILL.md)   | Assignment handoff and the CLI review loop                                    |
+| [Skill configuration](docs/skills.md)          | Optional worker skills and instruction files                                  |
+| [CLI troubleshooting](docs/troubleshooting.md) | Error codes, failed verification, historical attempts and safe recovery       |
+| [Architecture](docs/architecture.md)           | Components, durable contracts and upstream source basis                       |
+| [Project workflow](docs/agents/domain.md)      | Repository guidance, local task tracking, domain context and decision records |
+| [Verification record](docs/verification.md)    | Recorded checks and the limits of their evidence                              |
+| [Migration](docs/migration.md)                 | Python-to-TypeScript and CLI + Skill compatibility                            |
 
 ## License
 
 [MIT](LICENSE)
+
+## Scratch retention
+
+Run `node dist/cli.js prune --days 7 --home DIR` against the service to remove old Harness homes of clean, ended attempts and old doctor scratch directories whose recorded owner has exited. Active or uncertain tasks are excluded. Journal and snapshot evidence is retained indefinitely; this command does not delete task history. Successful `doctor` calls clean up their own scratch directories.

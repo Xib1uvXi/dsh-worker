@@ -6,7 +6,7 @@ The local service owns task state and executions. The external orchestrator prep
 
 ## 1. Check prerequisites and build
 
-Required: Node **24.18 or newer**, npm and Git. macOS arm64 is validated; Linux still needs separate platform verification.
+Required: Node **24.18 or newer**, npm and Git 2.43 or newer. macOS arm64 is validated; Linux still needs separate platform verification.
 
 ```sh
 node --version
@@ -16,6 +16,8 @@ npm ci
 npm run build
 node dist/cli.js help
 ```
+
+The Harness runtime requires native dependencies, including `fs-ext`. Installation must run their lifecycle scripts and may need a C++ build toolchain (Xcode Command Line Tools on macOS). A source-only `--ignore-scripts` install does not establish runtime readiness. Follow your package manager’s script policy; `doctor` reports missing persistence dependencies before starting Harness.
 
 Expected: installation and build exit successfully, and `help` lists the CLI commands. To run the project's full test suite, install its test browser with `npx playwright install chromium`, then run `npm run check`. The test browser is not needed merely to open the Dashboard in your own browser.
 

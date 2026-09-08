@@ -1,7 +1,10 @@
 import { expect, it } from "vitest";
 import { resolve } from "node:path";
 import { Controller } from "../packages/core/src/controller.js";
-import { SdkRuntime } from "../packages/runtime/src/adapter.js";
+import {
+  SdkRuntime,
+  type RuntimeAdapter,
+} from "../packages/runtime/src/adapter.js";
 import { trajectory } from "../packages/server/src/trajectory.js";
 import { fixture, FakeRuntime } from "./helpers.js";
 import { startHttp } from "../packages/server/src/http.js";
@@ -177,7 +180,7 @@ it("does not replay an uncertain live instruction, and fences a receipt interrup
     );
     return { termination: "cancelled" };
   };
-  const runtime: import("../packages/runtime/src/adapter.js").RuntimeAdapter = {
+  const runtime: RuntimeAdapter = {
     execute: async (req, dir, marker, signal, onMessage) => {
       onMessage({
         type: "notification",
@@ -203,6 +206,9 @@ it("does not replay an uncertain live instruction, and fences a receipt interrup
   try {
     c.prepare(f.ticket);
     c.run(f.ticket.ticketId);
+    await expect
+      .poll(() => c.store.get(f.ticket.ticketId).attempts.at(-1)?.receipt)
+      .toBe(true);
     const command = {
       action: "instruct" as const,
       ticketId: f.ticket.ticketId,

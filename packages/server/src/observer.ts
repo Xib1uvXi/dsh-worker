@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { createZstdDecompress } from "node:zlib";
 import { z } from "zod";
 import type { SessionSummary } from "../../contracts/src/index.js";
-import { ensure } from "../../core/src/util.js";
+import { ensure } from "../../shared/src/util.js";
 const headerSchema = z.object({
   type: z.literal("session"),
   version: z.number().int().min(0).max(2),
@@ -39,6 +39,8 @@ async function firstLine(path: string) {
   const decoder = path.endsWith(".zstd")
     ? createZstdDecompress({ chunkSize: 4096 })
     : undefined;
+  // pipe() does not propagate source errors to the stream we iterate.
+  if (decoder) input.on("error", (error) => decoder.destroy(error));
   const stream = decoder ? input.pipe(decoder) : input;
   let data = Buffer.alloc(0);
   const timeout = setTimeout(

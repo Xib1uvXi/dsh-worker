@@ -13,13 +13,31 @@ export function deliveryDocument(response: string): unknown {
     const prefix = text.slice(0, start);
     const fence = /```(?:json)?\s*$/i.test(prefix);
     const prose = fence ? prefix.replace(/```(?:json)?\s*$/i, "") : prefix;
-    // Arrays and standalone JSON scalars are alternative documents too.
-    // Do not silently discard them as introductory prose.
-    if (
-      /[\[\]]/.test(prose) ||
-      /^\s*(?:null\b|true\b|false\b|-?\d|")/m.test(prose)
-    )
-      throw new Error("Ambiguous delivery prefix");
+    // Reject actual JSON values (including multiline arrays) at a line start,
+    // while allowing numbered lists, Markdown links and checked task lists.
+    const lines = prose.split(/\r?\n/);
+    for (let i = 0; i < lines.length; i++) {
+      const candidate = lines.slice(i).join("\n").trimStart();
+      if (!/^(?:\[|null\b|true\b|false\b|"|-?\d)/.test(candidate)) continue;
+      for (let end = 1; end <= candidate.length; end++) {
+        if (end < candidate.length && !/\s/.test(candidate[end]!)) continue;
+        try {
+          const value: unknown = JSON.parse(candidate.slice(0, end));
+          // A count followed by words is normal prose, not a second document.
+          if (typeof value === "number") {
+            const restOfLine = candidate.slice(end).split("\n")[0]!.trim();
+            if (
+              restOfLine &&
+              !/^(?:null\b|true\b|false\b|[["\d-])/.test(restOfLine)
+            )
+              continue;
+          }
+        } catch {
+          continue;
+        }
+        throw new Error("Ambiguous delivery prefix");
+      }
+    }
     for (const line of prose.split(/\r?\n/).filter((line) => line.trim())) {
       let parsed = false;
       try {

@@ -51,3 +51,13 @@ it("does not make model prose or extra fields into acceptable delivery evidence"
     ),
   ).toThrow();
 });
+it("allows numbered progress and Markdown task/link prose before the single delivery", () => {
+  for (const prefix of [
+    "1. Added tests\n2. Fixed implementation",
+    "18 tests passed",
+    "- [x] Tests pass",
+    "See [changes](https://example.com).",
+    "Tests [18/18] passed",
+  ])
+    expect(deliveryDocument(prefix + "\n" + JSON.stringify(doc))).toEqual(doc);
+});

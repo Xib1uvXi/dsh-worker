@@ -53,6 +53,7 @@ if (token) {
 }
 let overview: Overview | undefined;
 let selected: string | undefined;
+let detailRequest = 0;
 let generation = 0;
 let cursor = 0;
 let lastSeq = 0;
@@ -97,10 +98,14 @@ const instructionDrafts = new Map<string, { id: string; text: string }>();
 const instructionPending = new Set<string>();
 function version(t: TicketView) {
   return JSON.stringify([
+    t.ticket.ticketId,
     t.ticket.revision,
     t.state,
     t.activeOperation,
     t.archived,
+    t.stale,
+    t.currentSnapshot,
+    t.error,
     t.instructions?.map((i) => [i.id, i.status]),
     t.attempts.at(-1)?.receipt,
   ]);
@@ -193,12 +198,21 @@ async function loadOverview() {
       $<HTMLDialogElement>("detail").open &&
       detailVersion !== version(current)
     ) {
+      const full = await request<TicketView>(
+        `/api/tickets/${encodeURIComponent(current.ticket.ticketId)}`,
+      );
+      if (
+        selected !== current.ticket.ticketId ||
+        !$<HTMLDialogElement>("detail").open ||
+        n !== generation
+      )
+        return;
       const drafts = [
         ...$("detail-body").querySelectorAll<
           HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement
         >("input,textarea,select"),
       ].map((n) => [n.getAttribute("aria-label"), n.value]);
-      renderDetail(current);
+      renderDetail(full);
       for (const [label, value] of drafts)
         if (label) {
           const input = [
@@ -388,14 +402,16 @@ async function act(action: Action) {
 }
 async function showDetail(id: string) {
   selected = id;
+  const requestId = ++detailRequest;
   try {
     const t = await request<TicketView>(
       `/api/tickets/${encodeURIComponent(id)}`,
     );
+    if (requestId !== detailRequest || selected !== id) return;
     renderDetail(t);
     $<HTMLDialogElement>("detail").showModal();
   } catch (error) {
-    connection(String(error), true);
+    if (requestId === detailRequest) connection(String(error), true);
   }
 }
 function disclosure(title: string, text: string) {
@@ -425,6 +441,7 @@ function button(
   return b;
 }
 function renderDetail(t: TicketView) {
+  if (selected !== t.ticket.ticketId) return;
   detailVersion = version(t);
   $("detail-title").textContent = t.ticket.title;
   const body = $("detail-body");
@@ -502,7 +519,8 @@ function renderDetail(t: TicketView) {
             revision: t.ticket.revision,
             instruction: draft.text,
           });
-          instructionDrafts.delete(draftKey);
+          if (instructionDrafts.get(draftKey)?.id === draft.id)
+            instructionDrafts.delete(draftKey);
           instructionPending.delete(draftKey);
           if (selected === t.ticket.ticketId) renderDetail(updated);
           await refresh();
@@ -781,6 +799,10 @@ function renderDetail(t: TicketView) {
   );
 }
 $("close-detail").onclick = () => $<HTMLDialogElement>("detail").close();
+$("detail").addEventListener("close", () => {
+  selected = undefined;
+  detailRequest++;
+});
 $("close-create").onclick = () => $<HTMLDialogElement>("create").close();
 $("new-task").onclick = () => {
   openCreate();

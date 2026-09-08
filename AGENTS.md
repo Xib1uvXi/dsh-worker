@@ -24,16 +24,19 @@ Read the sections relevant to the change; do not load every document for every t
 
 ## Build and validate
 
-Requires Node 24.18 or newer, npm and Git. macOS arm64 has recorded validation; Linux needs separate platform evidence.
+Requires Node 24.18 or newer, npm and Git 2.43 or newer. macOS arm64 has recorded validation; Linux needs separate platform evidence.
 
 | Scope | Check |
 | --- | --- |
 | Install dependencies | `npm ci` |
 | Build distributable code and types | `npm run build` |
 | Focused behavior after building | `npx vitest run tests/<affected>.test.ts` with an existing test file |
-| Complete implementation batch | `npm run check` (type checking, build and tests) |
+| Static lint | `npm run lint` (ESLint, including typed Promise checks; zero warnings) |
+| Apply available lint fixes | `npm run lint:fix` |
+| Complete implementation batch | `npm run check` (lint, type checking, build and tests) |
 | Source formatting | `npm run format:check` |
 | Install the browser used by tests | `npx playwright install chromium` once per test environment |
+| Fresh tarball installation and runtime | `npm run test:package` (or append `-- --offline` with a populated npm cache) |
 | Released runtime initialization and shutdown | `node dist/cli.js doctor` after building; no model request |
 
 For documentation-only changes, check links, command accuracy, whitespace and consistency with source; runtime tests are needed only for affected runtime behavior. Use focused tests during implementation and the complete gate at the implementation batch boundary. Formatting applies to edited source files; report unrelated existing failures separately.

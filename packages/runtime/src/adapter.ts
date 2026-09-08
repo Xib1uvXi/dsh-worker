@@ -3,13 +3,14 @@ import { appendFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { join } from "node:path";
 import type { ProcessIdentity } from "../../contracts/src/index.js";
-import { atomic, delay, ensure } from "../../core/src/util.js";
+import { atomic, delay, ensure } from "../../shared/src/util.js";
 import {
   cleanEnv,
   discover,
+  discoverAsync,
   identity,
   terminate,
-} from "../../core/src/process.js";
+} from "../../shared/src/process.js";
 import type { RunnerRequest, RunnerMessage } from "./runner.js";
 export interface RuntimeOutcome {
   receipt: boolean;
@@ -134,7 +135,21 @@ export class SdkRuntime implements RuntimeAdapter {
       if (child.connected) child.send("cancel");
     };
     signal.addEventListener("abort", cancel, { once: true });
-    const interval = setInterval(scan, 500);
+    let scanning: Promise<void> | undefined;
+    const interval = setInterval(() => {
+      if (scanning) return;
+      scanning = discoverAsync(marker, known)
+        .then((processes) => {
+          known = processes;
+          onProcesses(known);
+        })
+        .catch((error) => {
+          scanError = error;
+        })
+        .finally(() => {
+          scanning = undefined;
+        });
+    }, 500);
     let killing = false;
     let cancelledAt: number | undefined;
     const startTime = Date.now();
@@ -219,6 +234,7 @@ export class SdkRuntime implements RuntimeAdapter {
       clearInterval(watchdog);
       signal.removeEventListener("abort", cancel);
     }
+    await scanning;
     await delay(20);
     let survivors: ProcessIdentity[] = [];
     try {

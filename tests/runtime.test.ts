@@ -75,3 +75,23 @@ it("uses an explicit scrubbed environment and rejects reserved config overrides"
     delete process.env.UNRELATED_SECRET;
   }
 });
+it("decodes verifier stdout and stderr independently across UTF-8 chunks", async () => {
+  const { execute } = await import("../packages/core/src/process.js");
+  const { randomUUID } = await import("node:crypto");
+  const s = fixture();
+  const result = await execute(
+    [
+      process.execPath,
+      "-e",
+      `const b=Buffer.from('中文🙂');process.stdout.write(b.subarray(0,4));process.stderr.write('错误');setTimeout(()=>process.stdout.write(b.subarray(4)),80);`,
+    ],
+    s.repo,
+    3,
+    randomUUID(),
+    () => {},
+  );
+  expect(result.exitCode).toBe(0);
+  expect(result.output).not.toContain("�");
+  expect(result.output).toContain("文🙂");
+  expect(result.output).toContain("错误");
+});

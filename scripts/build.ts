@@ -5,8 +5,9 @@ await mkdir("dist/web", { recursive: true });
 await build({
   entryPoints: {
     cli: "packages/cli/src/main.ts",
+    "snapshot-worker": "packages/core/src/snapshot-worker.ts",
     runner: "packages/runtime/src/runner.ts",
-    index: "packages/core/src/index.ts",
+    index: "packages/index.ts",
     contracts: "packages/contracts/src/index.ts",
     plugin: "packages/server/src/plugin.ts",
     http: "packages/server/src/http.ts",

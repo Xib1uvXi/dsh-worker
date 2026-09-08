@@ -1,6 +1,6 @@
 # TypeScript worker architecture
 
-This replaces the Python controller. The worker implements code changes; an external orchestrator owns requirements, scheduling, review, acceptance and integration. Acceptance never means merged or released. During this rebuild the primary agent implements directly; no worker dispatch or review delegation is used.
+This replaces the Python controller. The worker implements code changes; an external orchestrator owns requirements, scheduling, review, acceptance and integration. Acceptance never means merged or released. The worker runtime prohibits delegation; development review follows the current repository working guide.
 
 ## Source basis
 
@@ -19,7 +19,9 @@ No embedded planning model, replacement agent loop, Python bridge, auto merge, r
 
 ## Durable rules
 
-SQLite is authoritative; a journal in the same transaction provides ordered, replayable UI events. Large artifacts use content-addressed immutable files. A snapshot includes HEAD, staged state, file content, executable modes, symlink targets, tracked deletions and untracked files. Review requires the exact revision, attempt and snapshot; verification must pass without changing the before/after snapshot. Accepted evidence is reported stale after edits. Complete requires raw completed plus receipt, delivery bound to the current attempt, snapshot in scope and clean process exit. Unknown outcomes stay interrupted. Recovery is inspect-first and an explicit continuation never sends a prompt.
+A dedicated `controller-ownership.sqlite` connection holds an exclusive lock for the controller lifetime, including stale process-marker replacement. It is separate from state transactions and is never unlinked; the OS releases its lock on process exit. The `controller.lock` process marker remains for inspection and detection of an older active controller.
+
+SQLite is authoritative; a journal in the same transaction provides ordered, replayable UI events. Large artifacts use content-addressed immutable files. A snapshot includes HEAD, staged state, file content, executable modes, symlink targets, tracked deletions and untracked files. Review requires the exact revision, attempt and snapshot; the latest verification for that attempt and revision must pass without changing the before/after snapshot. A newer failed or incomplete verification supersedes an earlier pass. Accepted evidence is reported stale after edits. Complete requires raw completed plus receipt, delivery bound to the current attempt, snapshot in scope and clean process exit. Unknown outcomes stay interrupted. Recovery is inspect-first and an explicit continuation never sends a prompt.
 
 ## Migration and compatibility
 
@@ -33,7 +35,7 @@ The old Python source, tests, archives and controller data have been removed at 
 4. Durable submit/rework/verify/review/recovery history; stale, incomplete, out-of-scope or uncertain evidence cannot pass.
 5. Authenticated interactive UI and CLI commands use the same controller; journal replay and restart recovery work; no mutation by read endpoints.
 6. Regression tests use real Git/SQLite/processes and the public SDK against a deterministic wire fixture; actual released runtime initialization/close is tested separately, with no development worker dispatch.
-7. Desktop browser interactions, built-package consumption, self-review of Spec and Standards. Independent review is intentionally not delegated under the user's current instruction; do not label self-review independent.
+7. Desktop browser interactions, built-package consumption, and explicit Spec and Standards review evidence. Historical self-review is not independent review.
 
 ## Display scope
 
@@ -58,3 +60,17 @@ Web trajectory polling updates every second while viewing, dashboard activity ev
 The orchestrator invokes the regular CLI and follows the bundled skill returned by `skill`. The former MCP adapter and direct SDK dependency have been removed. There is no stdio protocol server to register. CLI and Web still share authenticated loopback control and persistent state.
 
 CLI covers prepare, run, status/list, bounded waiting, natural-language instructions, cancellation/recovery, verification/review, archive/restore, hash-verified artifact retrieval, and local skill/workflow discovery. JSON input can come from files or stdin; instruction text can also come from a UTF-8 file or stdin. A stable instruction identity is required for safe retries. Detailed trajectory, raw event and agent-activity querying are Web-only; no CLI trace-query command is provided.
+
+## Polling, storage and maintenance
+
+HTTP overview and CLI wait use compact ticket records. Snapshot manifests are stored once in SQLite's additive `snapshots` table; ticket rows retain digest, scope diagnostics and a `detailsOmitted` marker. Full status hydrates file/index/diff evidence for review. Existing schema-2 inline snapshots remain readable and are extracted on their next state write.
+
+Polling checks run in one background worker. Requests for the same ticket state share a check and reuse its result for at most three seconds (`snapshotCheckedAt`, `snapshotMaxAgeMs`). File hashes are reused only when inode, size, mode, nanosecond modification and change times match. These checks inform display; verification, review and recovery capture exact contents without this cache. Running/ready polling does not capture a repository. The synchronous embedding `status()` remains an explicit immediate inspection; transports use `pollStatus()` / `pollOverview()`.
+
+Periodic process scans use asynchronous OS commands and persist only identity-set changes. Initial ownership and final cleanup remain mandatory. Snapshot capture for settlement and review occurs before the short SQLite state transaction. Snapshots still hash the complete delivered tree and staged state; blob storage copies only changed files. Changed paths also compare actual file bytes and executable modes with the assigned base tree in its checkout representation, so assume-unchanged/skip-worktree index flags and `core.fileMode=false` cannot hide scope violations; staged-only changes remain included. At first worktree creation, Git 2.43+ reconstructs checkout bytes from the assigned commit and its attributes. Conversion overrides are saved once as a content-addressed baseline outside ticket JSON; the ticket retains only its path and digest. Subsequent snapshots verify this immutable evidence and bind its digest, so later attribute, filter configuration or filter program changes cannot redefine the admitted baseline. Polling never runs conversion filters. Legacy records without this admission evidence compare raw committed bytes and never infer a new baseline from current files or filter settings. Existing immutable blobs reuse a checked inode/metadata cache, while artifact downloads always hash the actual bytes.
+
+Verification interruption retains its operation kind across restarts and recovery failures. After explicit cleanup, an unchanged valid delivery returns to `awaiting_review` for another verification, with no new model attempt. A changed or invalid delivery returns to `ready`; verification is never inferred to have passed.
+
+`prune --days 7` explicitly removes old Harness homes only for idle tasks' clean, ended attempts, plus old doctor scratch directories whose recorded owner has exited. Legacy doctor directories without ownership evidence are retained. Successful doctor runs remove their own scratch directory. The journal, ticket history, raw runner events, admission inputs and snapshots have indefinite evidence retention; they are not automatically aged out because recovery, event replay and external acceptance depend on them. Archive changes visibility and does not authorize evidence deletion.
+
+The single npm distribution has enforceable internal import directions (see `tests/boundaries.test.ts`). `shared` contains Node OS utilities below runtime/core; the root public entry composes controller, runtime and CLI exports. Runtime cannot import core, and core cannot import clients. Browser display labels live in `packages/web`; trajectory wire titles use language-neutral event keys.

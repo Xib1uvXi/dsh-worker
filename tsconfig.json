@@ -4,6 +4,7 @@
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
     "strict": true,
+    "resolveJsonModule": true,
     "noUncheckedIndexedAccess": true,
     "verbatimModuleSyntax": true,
     "skipLibCheck": true,
@@ -12,6 +13,11 @@
     "allowImportingTsExtensions": true,
     "noEmit": true
   },
-  "include": ["packages/**/*.ts", "scripts/**/*.ts", "tests/**/*.ts"],
+  "include": [
+    "packages/**/*.ts",
+    "scripts/**/*.ts",
+    "tests/**/*.ts",
+    "vitest.config.ts"
+  ],
   "exclude": ["node_modules", ".scratch", "dist"]
 }

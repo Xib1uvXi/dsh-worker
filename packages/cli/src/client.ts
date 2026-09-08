@@ -4,8 +4,9 @@ import type {
   Action,
   Overview,
   TicketView,
+  PruneResult,
 } from "../../contracts/src/index.js";
-import { ensure, hash } from "../../core/src/util.js";
+import { ensure, hash } from "../../shared/src/util.js";
 export class ClientError extends Error {
   constructor(
     readonly code: string,
@@ -122,10 +123,15 @@ export class WorkerClient {
     );
     return bytes;
   }
-  status(id: string) {
-    return this.request<TicketView>(`/api/tickets/${encodeURIComponent(id)}`);
+  status(id: string, summary = false) {
+    return this.request<TicketView>(
+      `/api/tickets/${encodeURIComponent(id)}${summary ? "?summary=1" : ""}`,
+    );
   }
+  action(command: Extract<Action, { action: "prune" }>): Promise<PruneResult>;
+  action(command: Exclude<Action, { action: "prune" }>): Promise<TicketView>;
+  action(command: Action): Promise<TicketView | PruneResult>;
   action(command: Action) {
-    return this.request<TicketView>("/api/actions", command);
+    return this.request<TicketView | PruneResult>("/api/actions", command);
   }
 }

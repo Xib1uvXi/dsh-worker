@@ -142,6 +142,12 @@ export const instructionInputSchema = z
   })
   .strict();
 export const actionSchema = z.discriminatedUnion("action", [
+  z
+    .object({
+      action: z.literal("prune"),
+      days: z.number().int().min(1).max(36500).default(7),
+    })
+    .strict(),
   instructionInputSchema.extend({
     action: z.literal("instruct"),
     ticketId: id,
@@ -186,6 +192,8 @@ export interface FileEntry {
   target?: string;
 }
 export interface Snapshot {
+  baselineDigest?: string;
+  detailsOmitted?: boolean;
   digest: string;
   baseCommit: string;
   head: string;
@@ -245,12 +253,14 @@ export interface TicketRecord {
   worktree: string;
   owner: string;
   prepared: boolean;
+  checkoutBaseline?: { path: string; digest: string };
   updatedAt: string;
   attempts: Attempt[];
   reviews: Review[];
   continuations: Continuation[];
   verifications: Verification[];
   activeOperation?: string;
+  interruptedOperation?: "verification" | "execution";
   error?: string;
 }
 export interface WorkerInstruction {
@@ -288,9 +298,16 @@ export interface TrajectoryPage {
   cursor: number;
   hasMore: boolean;
 }
+export interface PruneResult {
+  removed: string[];
+  retentionDays: number;
+  evidenceRetained: boolean;
+}
 export interface TicketView extends TicketRecord {
   stale: boolean;
   currentSnapshot?: string;
+  snapshotCheckedAt?: string;
+  snapshotMaxAgeMs?: number;
 }
 export interface JournalEvent {
   seq: number;

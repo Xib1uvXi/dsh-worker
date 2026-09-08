@@ -1,24 +1,19 @@
 #!/usr/bin/env node
 import { Context } from "@deepseek-ai/cordis";
 import { parseArgs } from "node:util";
-import {
-  existsSync,
-  mkdirSync,
-  readFileSync,
-  unlinkSync,
-  writeFileSync,
-} from "node:fs";
+import { writeFileSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import { join, resolve, dirname } from "node:path";
 import { homedir } from "node:os";
 import { fileURLToPath } from "node:url";
-import { serviceToken } from "./auth.js";
+import { checkRuntimeDependencies } from "../../runtime/src/preflight.js";
+import { runtimeVersion } from "../../runtime/src/version.js";
 import { diagnose, errors, health, summary, errorInfo } from "./diagnostics.js";
 import { DeepSeekHarness } from "@deepseek-ai/dsh-sdk-client";
 import { WorkerClient } from "./client.js";
 import * as plugin from "../../server/src/plugin.js";
 import { SdkRuntime } from "../../runtime/src/adapter.js";
-import { identity, alive, cleanEnv } from "../../core/src/process.js";
-import { atomic, ensure, uid } from "../../core/src/util.js";
+import { cleanEnv, identity } from "../../shared/src/process.js";
+import { atomic, ensure, uid } from "../../shared/src/util.js";
 import {
   actionSchema,
   id,
@@ -30,6 +25,7 @@ async function main() {
   const { values, positionals } = parseArgs({
     allowPositionals: true,
     options: {
+      days: { type: "string" },
       home: { type: "string" },
       port: { type: "string" },
       capacity: { type: "string" },
@@ -57,7 +53,7 @@ async function main() {
   );
   if (command === "help" || values.help) {
     console.log(
-      `dsh-worker 0.2 — CLI + Skill control service\n\nserve [--port 4317] [--capacity 2] [--enable-dispatch]\nlist [--summary] | status ID [--summary] | prepare --file ticket.json\nrun ID [--wait] | cancel ID | verify ID [--wait]\nwait ID [--timeout SECONDS]\nreview --file review.json | recover ID | recover --file continuation.json\ninstruct ID --file instruction.json\ninstruct ID --instruction-file message.txt --revision N --instruction-id KEY\narchive ID | restore ID\nartifact SHA256 --output FILE\nhealth | diagnose ID | errors ID [--attempt ATTEMPT_ID] [--full]\nsessions | doctor | skill | workflow\n\nAll commands accept --home DIR; data commands print JSON (--json is optional).\n--file - reads JSON from stdin. Instruction files contain UTF-8 text.\nReuse the same instruction ID for retries; uncertain delivery is never replayed.\n--wait/ wait defaults to a 3600-second timeout; timing out does not cancel work.\nStart the service once, then use the bundled skill/SKILL.md for orchestration.\nModel dispatch is off until explicitly enabled on serve.`,
+      `dsh-worker 0.2 — CLI + Skill control service\n\nserve [--port 4317] [--capacity 2] [--enable-dispatch]\nlist [--summary] | status ID [--summary] | prepare --file ticket.json\nrun ID [--wait] | cancel ID | verify ID [--wait]\nwait ID [--timeout SECONDS]\nreview --file review.json | recover ID | recover --file continuation.json\ninstruct ID --file instruction.json\ninstruct ID --instruction-file message.txt --revision N --instruction-id KEY\narchive ID | restore ID\nartifact SHA256 --output FILE\nhealth | diagnose ID | errors ID [--attempt ATTEMPT_ID] [--full]\nsessions | doctor | skill | workflow\nprune [--days 7] (old clean Harness homes only; evidence retained)\n\nAll commands accept --home DIR; data commands print JSON (--json is optional).\n--file - reads JSON from stdin. Instruction files contain UTF-8 text.\nReuse the same instruction ID for retries; uncertain delivery is never replayed.\n--wait/ wait defaults to a 3600-second timeout; timing out does not cancel work.\nStart the service once, then use the bundled skill/SKILL.md for orchestration.\nModel dispatch is off until explicitly enabled on serve.`,
     );
     return;
   }
@@ -103,31 +99,12 @@ async function main() {
   }
   if (command === "serve") {
     mkdirSync(home, { recursive: true, mode: 0o700 });
-    const lock = join(home, "service.lock");
-    if (existsSync(lock)) {
-      const prior = JSON.parse(readFileSync(lock, "utf8")) as {
-        pid: number;
-        start: string;
-      };
-      ensure(
-        !alive(prior),
-        "service_running",
-        "Another controller owns this home",
-      );
-      unlinkSync(lock);
-    }
-    const own = identity(process.pid);
-    ensure(own, "identity", "Cannot determine service process identity");
-    writeFileSync(lock, JSON.stringify(own), { flag: "wx", mode: 0o600 });
     const ctx = new Context();
     let stopping = false;
     const stop = async () => {
       if (stopping) return;
       stopping = true;
       await ctx.fiber.dispose();
-      if (existsSync(lock)) unlinkSync(lock);
-      if (existsSync(join(home, "service.json")))
-        unlinkSync(join(home, "service.json"));
     };
     process.once("SIGINT", () => {
       void stop();
@@ -139,7 +116,6 @@ async function main() {
       ? resolve(dirname(fileURLToPath(import.meta.url)), "../../../dist")
       : dirname(fileURLToPath(import.meta.url));
     try {
-      const token = serviceToken(home);
       await new Promise<void>((ready, reject) => {
         ctx.plugin(plugin, {
           home,
@@ -147,14 +123,9 @@ async function main() {
           dispatchEnabled: values["enable-dispatch"] ?? false,
           runtime: new SdkRuntime(join(dist, "runner.js")),
           port: Number(values.port ?? 4317),
-          token,
           webDir: join(dist, "web"),
           harnessHomes: values["harness-home"],
-          onReady: (url: string) => {
-            atomic(
-              join(home, "service.json"),
-              JSON.stringify({ url, token, pid: process.pid }),
-            );
+          onReady: (url: string, _controller: unknown, token: string) => {
             console.log(
               `dsh-worker: ${url}/#token=${token}\nDispatch: ${values["enable-dispatch"] ? "enabled" : "disabled"}`,
             );
@@ -170,8 +141,12 @@ async function main() {
     return;
   }
   if (command === "doctor") {
+    await checkRuntimeDependencies();
     const dir = join(home, "doctor", uid());
     mkdirSync(dir, { recursive: true, mode: 0o700 });
+    const owner = identity(process.pid);
+    ensure(owner, "identity", "Cannot identify doctor owner");
+    atomic(join(dir, "owner.json"), JSON.stringify(owner));
     const harness = new DeepSeekHarness({
       cwd: dir,
       processCwd: dir,
@@ -181,18 +156,19 @@ async function main() {
       env: cleanEnv([]),
       initializeTimeoutMs: 30000,
     });
-    let initialized = false;
+    let initialized: boolean;
     try {
       await harness.start();
       initialized = true;
     } finally {
       await harness.close();
+      rmSync(dir, { recursive: true, force: true });
     }
     console.log(
       JSON.stringify({
         node: process.version,
-        sdk: "0.1.3-alpha.2",
-        runtime: "0.1.3-alpha.2",
+        sdk: runtimeVersion,
+        runtime: runtimeVersion,
         initialized,
         closed: true,
         modelCalls: 0,
@@ -203,6 +179,7 @@ async function main() {
   }
   ensure(
     [
+      "prune",
       "list",
       "status",
       "errors",
@@ -260,9 +237,9 @@ async function main() {
   const wait = async (ticketId: string) => {
     const deadline = Date.now() + timeout * 1000;
     while (true) {
-      const status = await client.status(ticketId);
+      const status = await client.status(ticketId, true);
       if (!status.activeOperation || status.state === "interrupted")
-        return status;
+        return client.status(ticketId);
       ensure(
         Date.now() < deadline,
         "wait_timeout",
@@ -272,22 +249,27 @@ async function main() {
     }
   };
   let result: unknown;
-  if (command === "list") {
+  if (command === "prune") {
+    result = await client.request(
+      "/api/actions",
+      actionSchema.parse({ action: "prune", days: Number(values.days ?? 7) }),
+    );
+  } else if (command === "list") {
     const overview = await client.overview();
     result = values.summary
       ? { ...overview, tickets: overview.tickets.map(summary) }
       : overview;
   } else if (command === "status") {
-    const status = await client.status(ticketId!);
+    const status = await client.status(ticketId!, !!values.summary);
     result = values.summary ? summary(status) : status;
   } else if (command === "errors")
     result = errors(
-      await client.status(ticketId!),
+      await client.status(ticketId!, true),
       values.attempt,
       values.full,
     );
   else if (command === "diagnose") {
-    const report = diagnose(await client.status(ticketId!), home);
+    const report = diagnose(await client.status(ticketId!, true), home);
     result = report;
     if (!report.ok) process.exitCode = 1;
   } else if (command === "wait") result = await wait(ticketId!);

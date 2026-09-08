@@ -57,7 +57,7 @@ const harness = new DeepSeekHarness({
   env: cleanEnv([]),
   initializeTimeoutMs: 30000,
 });
-let initialized = false;
+let initialized: boolean;
 try {
   await harness.start();
   initialized = true;

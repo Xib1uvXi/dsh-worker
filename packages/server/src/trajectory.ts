@@ -31,21 +31,6 @@ function content(v: unknown): string {
     .filter(Boolean)
     .join("\n");
 }
-const titles: Record<string, string> = {
-  "turn/start": "开始执行轮次",
-  "turn/end": "轮次结束",
-  "step/start": "模型正在处理",
-  "step/end": "模型步骤结束",
-  "user/message": "用户 / 上下文消息",
-  "assistant/message": "Agent 回复",
-  "tool/call": "调用工具",
-  "tool/result": "工具结果",
-  "agent/inbox/spliced": "指令队列变更",
-  "compaction/start": "压缩上下文",
-  "compaction/end": "上下文压缩结束",
-  "llm/retry": "模型请求重试",
-  "llm/retry-started": "开始重试",
-};
 export function project(
   event: JournalEvent,
   record: TicketRecord,
@@ -80,7 +65,7 @@ export function project(
     JSON.stringify(event.data, (key, value) => {
       if (key === "stream") return undefined;
       if (obj(value).type === "reasoning")
-        return { type: "reasoning", text: "[省略]" };
+        return { type: "reasoning", text: "[omitted]" };
       return value;
     }),
   );
@@ -91,7 +76,7 @@ export function project(
     sessionId,
     kind,
     title:
-      (toolResult?.isError === true ? "工具执行失败" : (titles[kind] ?? kind)) +
+      (toolResult?.isError === true ? "tool/error" : kind) +
       (kind.startsWith("tool/") && str(data.name)
         ? ` · ${str(data.name)}`
         : ""),
@@ -114,7 +99,7 @@ export function trajectory(
   after: number,
   activityOnly = false,
 ): TrajectoryPage {
-  const record = store.get(id);
+  const record = store.get(id, false);
   let cache = caches.get(store);
   if (!cache) {
     cache = new Map();
@@ -131,7 +116,7 @@ export function trajectory(
         sessionId: a.sessionId,
         attemptId: a.id,
         status: "unknown",
-        action: "等待运行时事件",
+        action: "runtime/waiting",
         updatedAt: a.startedAt,
       });
   while (true) {
@@ -151,7 +136,7 @@ export function trajectory(
             parentSessionId: parent.sessionId,
             attemptId: parent.attemptId,
             status: "running",
-            action: "子 Agent 已启动",
+            action: "subagent/started",
             updatedAt: e.time,
           });
       }
@@ -160,12 +145,12 @@ export function trajectory(
       agent.updatedAt = e.time;
       if (n.method === "session.status") {
         agent.status = p.status === "running" ? "running" : "idle";
-        agent.action = p.status === "running" ? "正在执行" : "等待后续指令";
+        agent.action =
+          p.status === "running" ? "runtime/running" : "runtime/idle";
       }
       if (n.method === "subagent.finished") {
         agent.status = "ended";
-        agent.action =
-          p.status === "ok" ? "子 Agent 已结束" : "子 Agent 执行失败";
+        agent.action = p.status === "ok" ? "subagent/ended" : "subagent/error";
       }
       if (["tool/call", "step/start", "turn/start"].includes(entry.kind)) {
         agent.status = "running";
@@ -173,9 +158,9 @@ export function trajectory(
           entry.title +
           (entry.kind === "tool/call" ? ` · ${entry.text.slice(0, 180)}` : "");
       }
-      if (entry.kind === "tool/result") agent.action = "已收到工具结果";
+      if (entry.kind === "tool/result") agent.action = "tool/received";
       if (entry.kind === "assistant/message")
-        agent.action = entry.text.slice(0, 180) || "Agent 已回复";
+        agent.action = entry.text.slice(0, 180) || "assistant/replied";
     }
     if (events.length < 500) break;
   }
@@ -191,17 +176,17 @@ export function trajectory(
         action: a.parentSessionId
           ? a.status === "ended"
             ? a.action
-            : "所属执行已结束，运行时已关闭"
+            : "runtime/closed"
           : attempt.error ||
             attempt.delivery?.summary ||
             attempt.termination ||
-            "执行已结束",
+            "execution/ended",
       };
     if (record.state === "interrupted")
       return {
         ...a,
         status: "interrupted" as const,
-        action: "连接中断，需核对执行状态",
+        action: "runtime/interrupted",
       };
     return { ...a };
   });
