@@ -547,6 +547,7 @@ export class Controller {
             sessionId: attempt.sessionId,
             worktree: r.worktree,
             harnessHome: join(dir, "harness-home"),
+            controllerHome: this.home,
             patches,
             prompt,
             dshBin: this.options.dshBin,

@@ -278,8 +278,14 @@ export function createCheckoutBaseline(
 
 // --raw -z keeps unusual paths unambiguous; the patch follows a double NUL.
 // Read both together so Git computes each worktree/index diff only once.
-function readDiff(cwd: string, base: string, cached = false) {
+function readDiff(
+  cwd: string,
+  base: string,
+  filterOverrides: string[],
+  cached = false,
+) {
   const output = git(cwd, [
+    ...filterOverrides,
     "diff",
     ...(cached ? ["--cached"] : []),
     "--raw",
@@ -368,9 +374,27 @@ export function capture(
     .toString()
     .split("\0")
     .filter(Boolean);
-  const working = readDiff(cwd, record.ticket.baseCommit);
-  const staged = readDiff(cwd, record.ticket.baseCommit, true);
-  const changes = new Set([...working.paths, ...others, ...staged.paths]);
+  // --no-textconv does not disable clean or long-running process filters.
+  // Override every effective external filter only for these read commands;
+  // admission-time checkout conversion remains unchanged.
+  const filterOverrides = [
+    ...new Set(
+      git(cwd, ["config", "--null", "--name-only", "--list"])
+        .toString()
+        .split("\0"),
+    ),
+  ]
+    .filter((key) => /^filter\..+\.(clean|smudge|process|required)$/.test(key))
+    .flatMap((key) => [
+      "-c",
+      `${key}=${key.endsWith(".required") ? "false" : ""}`,
+    ]);
+  const working = readDiff(cwd, record.ticket.baseCommit, filterOverrides);
+  const staged = readDiff(cwd, record.ticket.baseCommit, filterOverrides, true);
+  // Working patches compare raw Git blobs without external filters. Scope is
+  // determined below from actual bytes against the admitted checkout baseline,
+  // so legitimate smudge conversions are not classified as user edits.
+  const changes = new Set([...others, ...staged.paths]);
   const names = [
     ...new Set([...baseline.keys(), ...tracked, ...others]),
   ].sort();

@@ -32,6 +32,15 @@ export function agentCard(a: AgentActivity) {
     ),
   );
   card.title = a.parentSessionId ? `父会话 ${a.parentSessionId}` : a.attemptId;
+  if (a.stats) {
+    const s = a.stats;
+    card.append(
+      node(
+        "small",
+        `${s.steps} 步 · 模型 ${(s.llmMs / 1000).toFixed(1)}s · 工具 ${(s.toolMs / 1000).toFixed(1)}s · 首 token ${s.ttftSteps ? `${(s.ttftMs / s.ttftSteps / 1000).toFixed(2)}s` : "未记录"} · 解码 ${s.decodeMs > 0 ? `${(s.decodeTokens / (s.decodeMs / 1000)).toFixed(1)} token/s` : "未记录"}`,
+      ),
+    );
+  }
   return card;
 }
 export function mountTrajectory(

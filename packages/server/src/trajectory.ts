@@ -5,6 +5,7 @@ import type {
   TrajectoryEntry,
   TrajectoryPage,
 } from "../../contracts/src/index.js";
+import { sessionStatsSchema } from "../../contracts/src/index.js";
 import type { Store } from "../../core/src/store.js";
 
 type ObjectValue = Record<string, unknown>;
@@ -142,6 +143,12 @@ export function trajectory(
       }
       const agent = state.agents.get(entry.sessionId ?? "");
       if (!agent) continue;
+      if (entry.kind === "worker/stats") {
+        const stats = sessionStatsSchema.safeParse(
+          obj(obj(p.event).data).stats,
+        );
+        if (stats.success) agent.stats = stats.data;
+      }
       agent.updatedAt = e.time;
       if (n.method === "session.status") {
         agent.status = p.status === "running" ? "running" : "idle";

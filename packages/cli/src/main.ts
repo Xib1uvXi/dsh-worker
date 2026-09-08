@@ -20,12 +20,24 @@ import {
   instructionInputSchema,
 } from "../../contracts/src/index.js";
 import { policyPatch, workflow } from "../../runtime/src/policy.js";
+import {
+  inspectCodingTools,
+  installTgrep,
+  codingPatch,
+} from "../../runtime/src/coding-tools.js";
+import {
+  inspectPlugins,
+  pluginEnvRequired,
+  pluginSelection,
+  pluginsPatch,
+} from "../../runtime/src/plugins.js";
 
 async function main() {
   const { values, positionals } = parseArgs({
     allowPositionals: true,
     options: {
       days: { type: "string" },
+      repo: { type: "string" },
       home: { type: "string" },
       port: { type: "string" },
       capacity: { type: "string" },
@@ -51,9 +63,30 @@ async function main() {
       process.env.DSH_WORKER_HOME ??
       join(homedir(), ".dsh-worker-v2"),
   );
+  if (command === "tools") {
+    if (positionals[1] === "install")
+      console.log(JSON.stringify(await installTgrep(home), null, 2));
+    else {
+      ensure(!positionals[1], "arguments", "Use tools [install] [--repo PATH]");
+      const report = await inspectCodingTools(
+        home,
+        resolve(values.repo ?? process.cwd()),
+      );
+      const plugins = inspectPlugins(home);
+      console.log(
+        JSON.stringify(
+          { ...report, plugins, ok: report.ok && plugins.ok },
+          null,
+          2,
+        ),
+      );
+      if (!report.ok || !plugins.ok) process.exitCode = 1;
+    }
+    return;
+  }
   if (command === "help" || values.help) {
     console.log(
-      `dsh-worker 0.2 — CLI + Skill control service\n\nserve [--port 4317] [--capacity 2] [--enable-dispatch]\nlist [--summary] | status ID [--summary] | prepare --file ticket.json\nrun ID [--wait] | cancel ID | verify ID [--wait]\nwait ID [--timeout SECONDS]\nreview --file review.json | recover ID | recover --file continuation.json\ninstruct ID --file instruction.json\ninstruct ID --instruction-file message.txt --revision N --instruction-id KEY\narchive ID | restore ID\nartifact SHA256 --output FILE\nhealth | diagnose ID | errors ID [--attempt ATTEMPT_ID] [--full]\nsessions | doctor | skill | workflow\nprune [--days 7] (old clean Harness homes only; evidence retained)\n\nAll commands accept --home DIR; data commands print JSON (--json is optional).\n--file - reads JSON from stdin. Instruction files contain UTF-8 text.\nReuse the same instruction ID for retries; uncertain delivery is never replayed.\n--wait/ wait defaults to a 3600-second timeout; timing out does not cancel work.\nStart the service once, then use the bundled skill/SKILL.md for orchestration.\nModel dispatch is off until explicitly enabled on serve.`,
+      `dsh-worker 0.2 — CLI + Skill control service\n\nserve [--port 4317] [--capacity 2] [--enable-dispatch]\nlist [--summary] | status ID [--summary] | prepare --file ticket.json\nrun ID [--wait] | cancel ID | verify ID [--wait]\nwait ID [--timeout SECONDS]\nreview --file review.json | recover ID | recover --file continuation.json\ninstruct ID --file instruction.json\ninstruct ID --instruction-file message.txt --revision N --instruction-id KEY\narchive ID | restore ID\nartifact SHA256 --output FILE\nhealth | diagnose ID | errors ID [--attempt ATTEMPT_ID] [--full]\nsessions | doctor [--repo PATH] | skill | workflow\ntools [--repo PATH] | tools install\nprune [--days 7] (old clean Harness homes only; evidence retained)\n\nAll commands accept --home DIR; data commands print JSON (--json is optional).\n--file - reads JSON from stdin. Instruction files contain UTF-8 text.\nReuse the same instruction ID for retries; uncertain delivery is never replayed.\n--wait/ wait defaults to a 3600-second timeout; timing out does not cancel work.\nStart the service once, then use the bundled skill/SKILL.md for orchestration.\nModel dispatch is off until explicitly enabled on serve.`,
     );
     return;
   }
@@ -147,13 +180,22 @@ async function main() {
     const owner = identity(process.pid);
     ensure(owner, "identity", "Cannot identify doctor owner");
     atomic(join(dir, "owner.json"), JSON.stringify(owner));
+    const workspace = values.repo ? resolve(values.repo) : dir;
+    const selectedPlugins = values.repo ? pluginSelection(home) : undefined;
+    const patches = values.repo
+      ? [
+          await codingPatch(home, workspace, dir),
+          await pluginsPatch(home, workspace, dir, selectedPlugins),
+          policyPatch(dir),
+        ]
+      : [policyPatch(dir)];
     const harness = new DeepSeekHarness({
-      cwd: dir,
-      processCwd: dir,
+      cwd: workspace,
+      processCwd: workspace,
       dshHome: join(dir, "harness-home"),
       profile: "sdk",
-      patches: [policyPatch(dir)],
-      env: cleanEnv([]),
+      patches,
+      env: cleanEnv(selectedPlugins ? pluginEnvRequired(selectedPlugins) : []),
       initializeTimeoutMs: 30000,
     });
     let initialized: boolean;

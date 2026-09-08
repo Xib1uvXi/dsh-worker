@@ -4,6 +4,9 @@ import type {
   HarnessNotification,
 } from "@deepseek-ai/dsh-sdk-client";
 import { readFileSync } from "node:fs";
+import { dirname } from "node:path";
+import { codingPatch } from "./coding-tools.js";
+import { pluginsPatch } from "./plugins.js";
 import type { Ticket } from "../../contracts/src/index.js";
 export interface RunnerRequest {
   ticket: Ticket;
@@ -11,6 +14,7 @@ export interface RunnerRequest {
   sessionId: string;
   worktree: string;
   harnessHome: string;
+  controllerHome?: string;
   patches: string[];
   prompt: string;
   dshBin?: string;
@@ -38,12 +42,44 @@ export async function runHarness(
   signal?: AbortSignal,
   listen?: (handler: (id: string, text: string) => Promise<void>) => () => void,
 ) {
+  let patches = request.patches;
+  if (request.controllerHome) {
+    try {
+      const coding = await codingPatch(
+        request.controllerHome,
+        request.worktree,
+        dirname(request.harnessHome),
+        signal,
+      );
+      const capabilities = await pluginsPatch(
+        request.controllerHome,
+        request.worktree,
+        dirname(request.harnessHome),
+        request.ticket.execution.plugins,
+      );
+      // Keep the immutable worker policy last, after user and coding extensions.
+      patches = [
+        ...patches.slice(0, -1),
+        coding,
+        capabilities,
+        ...patches.slice(-1),
+      ];
+    } catch (error) {
+      send({
+        type: "outcome",
+        receipt: false,
+        error: String(error),
+        closed: true,
+      });
+      return;
+    }
+  }
   const options: DeepSeekHarnessOptions = {
     cwd: request.worktree,
     processCwd: request.worktree,
     dshHome: request.harnessHome,
     profile: "sdk",
-    patches: request.patches,
+    patches,
     provider: request.ticket.execution.provider,
     model: request.ticket.execution.model,
     env: process.env,

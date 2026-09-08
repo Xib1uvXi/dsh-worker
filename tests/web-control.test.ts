@@ -244,3 +244,56 @@ it("does not replay an uncertain live instruction, and fences a receipt interrup
     await c.close();
   }
 });
+
+it("replays validated whole-session stats across trajectory pagination and controller restart", async () => {
+  const f = fixture();
+  let c = new Controller({
+    home: f.home,
+    runtime: new FakeRuntime(),
+    dispatchEnabled: true,
+  });
+  try {
+    c.prepare(f.ticket);
+    c.run(f.ticket.ticketId);
+    await c.wait(f.ticket.ticketId);
+    const a = c.status(f.ticket.ticketId).attempts[0]!;
+    const stats = {
+      turns: 2,
+      steps: 3,
+      llmMs: 2500,
+      toolMs: 4000,
+      ttftMs: 500,
+      ttftSteps: 2,
+      decodeMs: 2000,
+      decodeTokens: 100,
+    };
+    const emit = (value: unknown) =>
+      c.store.event(f.ticket.ticketId, "harness.notification", {
+        attemptId: a.id,
+        method: "session.event",
+        params: {
+          sessionId: a.sessionId,
+          event: { type: "worker/stats", data: { stats: value } },
+        },
+      });
+    emit(stats);
+    for (let i = 0; i < 150; i++)
+      c.store.event(f.ticket.ticketId, "observation", { i });
+    emit({ ...stats, llmMs: -1 });
+    expect(trajectory(c.store, f.ticket.ticketId, 0).agents[0]?.stats).toEqual(
+      stats,
+    );
+    const before = c.store.events(0, 1000, f.ticket.ticketId).length;
+    expect(
+      trajectory(c.store, f.ticket.ticketId, 100).agents[0]?.stats,
+    ).toEqual(stats);
+    expect(c.store.events(0, 1000, f.ticket.ticketId)).toHaveLength(before);
+    await c.close();
+    c = new Controller({ home: f.home, runtime: new FakeRuntime() });
+    expect(trajectory(c.store, f.ticket.ticketId, 0).agents[0]?.stats).toEqual(
+      stats,
+    );
+  } finally {
+    await c.close();
+  }
+});

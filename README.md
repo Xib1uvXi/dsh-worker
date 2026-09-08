@@ -18,11 +18,13 @@ From a source checkout:
 ```sh
 npm ci
 npm run build
-node dist/cli.js doctor
+node dist/cli.js tools install
+node dist/cli.js tools --repo .
+node dist/cli.js doctor --repo .
 node dist/cli.js serve
 ```
 
-`doctor` checks that the installed Harness runtime initializes and closes without a model request. It does not validate provider credentials or a real coding task.
+`tools install` installs the pinned tgrep under the controller home. Go/Rust projects also need their language servers; see [Coding tools](docs/coding-tools.md). `doctor --repo` checks that the installed Harness runtime and selected coding plugins initialize and close without a model request. It does not validate provider credentials or a real coding task.
 
 Open the **complete private login URL printed by `serve`**. Its fragment supplies the service token and is cleared after login; the browser remembers the token for that address. The token survives service restarts. A new browser profile or address needs the full login link again.
 
@@ -93,6 +95,10 @@ The desktop workspace supports natural-language task entry with explicit reposit
 
 Detailed execution trajectories and agent activity are Web-only. Inspect messages, tool calls, parameters, results and turn boundaries by attempt or session. Reported child agents retain parent identity, but worker delegation remains disabled. Task entry does not call an extra planning model, and the UI does not invent hidden reasoning.
 
+## Coding tools
+
+Worker `grep` uses tgrep by default, with an attempt-local index and live scanning when needed for freshness. Native Harness LSP adds Go, Rust and TypeScript definition/reference/implementation/hover queries. `tools --repo PATH` checks the selected executables; `tools.json` in the controller home can select languages and paths. See [Coding tools](docs/coding-tools.md) for installation, configuration, search costs and validation limits.
+
 ## Optional worker workflow configuration
 
 No workflow initialization is required to use the worker. The [bundled orchestrator skill](skill/SKILL.md) explains CLI control; optional **worker engineering skills** are configured separately in the control directory's `workflow.json`.
@@ -116,6 +122,10 @@ The service owns a process-identity lock, SQLite state and child executions. A t
 SQLite and its journal are authoritative; artifact files are immutable and content-addressed. Snapshots cover tracked and non-ignored untracked files, deletions, binary content, modes, symlink targets, Git HEAD and staged state. Ignored build outputs are not deliverables; files over 32 MiB and unsupported submodules block snapshot creation. Scope is checked against the assigned base. Worktrees provide cooperative workspace separation, not containment against malicious code running under your OS account.
 
 ## Development and verification
+
+Optional [worker capabilities](docs/plugins.md) add task-selected MCP servers, interactive terminals, hooks and experimental programmatic tool calls. Whole-session timing statistics are enabled by default. Configure them in controller-local `plugins.json` or a ticket's `execution.plugins`.
+
+The real coding-tool tests also require tgrep, gopls and rust-analyzer with the corresponding toolchains; follow [Coding tools](docs/coding-tools.md#development-checks) first.
 
 ```sh
 # Install the test browser once, then run lint, type checking, build and tests.

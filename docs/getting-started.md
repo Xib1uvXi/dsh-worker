@@ -202,3 +202,7 @@ Expected: `ready` for further implementation, or `awaiting_review` when interrup
 - Any integration result is recorded separately from task acceptance.
 
 On a new installation, only account access/key entry, local choices and the independent review judgment require operator input. This guide does not claim those steps have already been performed for its reader.
+
+## Coding tools before first dispatch
+
+Install tgrep with `node dist/cli.js tools install --home DIR`, then run `node dist/cli.js tools --home DIR --repo /path/to/repository` using the intended service environment. Go/Rust projects need their language servers. `doctor --repo /path/to/repository --home DIR` checks the selected plugin composition without calling a model. See [Coding tools](coding-tools.md) for controller-local configuration, prerequisites and observable checkpoints.

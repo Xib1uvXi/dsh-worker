@@ -1,4 +1,7 @@
 import { z } from "zod";
+import { pluginsSchema } from "./plugins.js";
+import type { SessionStats } from "./plugins.js";
+export * from "./plugins.js";
 
 export const id = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/);
 const text = z.string().trim().min(1);
@@ -31,6 +34,7 @@ export const runtimeSchema = z
     timeoutSeconds: z.number().int().min(1).max(86400).default(1800),
     patches: z.array(text).default([]),
     envRequired: z.array(z.string().regex(/^[A-Z][A-Z0-9_]*$/)).default([]),
+    plugins: pluginsSchema.optional(),
   })
   .strict();
 export const ticketSchema = z
@@ -285,6 +289,7 @@ export interface TrajectoryEntry {
   raw: unknown;
 }
 export interface AgentActivity {
+  stats?: SessionStats;
   sessionId: string;
   parentSessionId?: string;
   attemptId: string;
@@ -335,3 +340,33 @@ export interface Overview {
 export interface ApiError {
   error: { code: string; message: string };
 }
+export const codingToolsSchema = z
+  .object({
+    schemaVersion: z.literal(2).default(2),
+    search: z.enum(["tgrep", "ripgrep"]).default("tgrep"),
+    indexed: z.boolean().default(true),
+    tgrep: z.string().min(1).optional(),
+    languages: z
+      .union([z.literal("auto"), z.array(z.enum(["go", "rust", "typescript"]))])
+      .default("auto"),
+    servers: z
+      .object(
+        Object.fromEntries(
+          ["go", "rust", "typescript"].map((name) => [
+            name,
+            z
+              .object({
+                command: z.string().min(1).optional(),
+                args: z.array(z.string()).optional(),
+                configuration: z.unknown().optional(),
+                initializationOptions: z.unknown().optional(),
+              })
+              .strict()
+              .optional(),
+          ]),
+        ),
+      )
+      .strict()
+      .default({}),
+  })
+  .strict();

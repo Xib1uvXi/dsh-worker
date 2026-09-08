@@ -23,6 +23,7 @@ export const workerPolicy = [
     "tool-subagent-control",
     "tool-subagent-list-agents",
     "tool-workflow",
+    "tool-ralph",
   ].map((id) => ({ id, disabled: true })),
 ];
 export const workerRole = `You are the implementation worker. The external orchestrator owns design, scheduling, review, acceptance and integration. Implement and test only the assigned scope. Preserve inherited work. Do not commit, merge, push, publish, delegate, or self-accept. Return missing decisions and permission blockers in the delivery. Use repository instructions and configured skills for engineering methods within this role. Tool success and your final text do not constitute acceptance.`;

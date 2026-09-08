@@ -508,3 +508,61 @@ it("remembers Dashboard authentication across browser sessions and same-home ser
     await service.stop();
   }
 }, 25000);
+
+it("shows whole-session timing and distinguishes missing measurements in agent cards", async () => {
+  const f = fixture();
+  const c = new Controller({
+    home: f.home,
+    runtime: new FakeRuntime(),
+    dispatchEnabled: true,
+  });
+  c.prepare(f.ticket);
+  c.run(f.ticket.ticketId);
+  await c.wait(f.ticket.ticketId);
+  const a = c.status(f.ticket.ticketId).attempts[0]!;
+  c.store.event(f.ticket.ticketId, "harness.notification", {
+    attemptId: a.id,
+    method: "session.event",
+    params: {
+      sessionId: a.sessionId,
+      event: {
+        type: "worker/stats",
+        data: {
+          stats: {
+            turns: 1,
+            steps: 3,
+            llmMs: 2500,
+            toolMs: 4000,
+            ttftMs: 0,
+            ttftSteps: 0,
+            decodeMs: 0,
+            decodeTokens: 0,
+          },
+        },
+      },
+    },
+  });
+  const http = await startHttp(c, {
+    port: 0,
+    token: "b".repeat(64),
+    webDir: resolve("dist/web"),
+  });
+  const browser = await chromium.launch({ headless: true });
+  try {
+    const page = await browser.newPage();
+    page.setDefaultTimeout(5000);
+    await page.goto(http.url + "/#token=" + "b".repeat(64));
+    await page.locator(".task").click();
+    await expect
+      .poll(() =>
+        page.locator(".trajectory-panel .agent-card").first().textContent(),
+      )
+      .toContain(
+        "3 步 · 模型 2.5s · 工具 4.0s · 首 token 未记录 · 解码 未记录",
+      );
+  } finally {
+    await browser.close();
+    await http.close();
+    await c.close();
+  }
+}, 15000);

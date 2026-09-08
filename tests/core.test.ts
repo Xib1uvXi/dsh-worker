@@ -12,6 +12,35 @@ import { Controller } from "../packages/core/src/controller.js";
 import { capture } from "../packages/core/src/git.js";
 import { fixture, FakeRuntime } from "./helpers.js";
 const controllers: Controller[] = [];
+it.each(["clean", "process"])(
+  "snapshot polling never executes a configured %s filter",
+  (kind) => {
+    const s = setup();
+    const git = (...args: string[]) =>
+      execFileSync("git", ["-C", s.repo, ...args], { encoding: "utf8" });
+    writeFileSync(join(s.repo, ".gitattributes"), "source.txt filter=probe\n");
+    git("add", ".gitattributes");
+    git("commit", "-m", "filter attribute");
+    s.ticket.baseCommit = git("rev-parse", "HEAD").trim();
+    const prepared = s.c.prepare(s.ticket);
+    const counter = join(s.root, "filter-called");
+    const program = join(s.root, "filter.sh");
+    writeFileSync(
+      program,
+      `printf called >> '${counter}'\n${kind === "clean" ? "cat" : "exit 1"}\n`,
+    );
+    git("config", `filter.probe.${kind}`, `sh '${program}'`);
+    git("config", "filter.probe.required", "true");
+    writeFileSync(join(prepared.worktree, "source.txt"), "edited\n");
+    const before = s.c.store.events(0, 1000);
+    s.c.status(s.ticket.ticketId);
+    const snapshot = capture(prepared);
+    expect(snapshot.changedPaths).toContain("source.txt");
+    expect(snapshot.diff).toContain("+edited");
+    expect(existsSync(counter)).toBe(false);
+    expect(s.c.store.events(0, 1000)).toEqual(before);
+  },
+);
 function setup(enabled = true) {
   const f = fixture();
   const runtime = new FakeRuntime();

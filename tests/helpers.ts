@@ -1,4 +1,4 @@
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdtempSync, writeFileSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execFileSync } from "node:child_process";
@@ -11,6 +11,11 @@ import type { RunnerRequest } from "../packages/runtime/src/runner.js";
 export function fixture() {
   const root = mkdtempSync(join(tmpdir(), "dsh-worker-test-"));
   const repo = join(root, "repo");
+  mkdirSync(join(root, "home"));
+  writeFileSync(
+    join(root, "home", "tools.json"),
+    JSON.stringify({ search: "ripgrep", languages: [] }),
+  );
   execFileSync("git", ["init", repo], { stdio: "ignore" });
   execFileSync("git", ["-C", repo, "config", "user.email", "test@example.com"]);
   execFileSync("git", ["-C", repo, "config", "user.name", "Test"]);

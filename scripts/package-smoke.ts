@@ -5,11 +5,15 @@ import { createRequire } from "node:module";
 import {
   mkdtempSync,
   writeFileSync,
+  mkdirSync,
+  copyFileSync,
   readdirSync,
   renameSync,
   rmSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
+import { homedir } from "node:os";
+import { managedTgrep } from "../packages/runtime/src/coding-tools.js";
 import { dirname, join, resolve } from "node:path";
 
 const exec = promisify(execFile);
@@ -43,6 +47,66 @@ try {
   ]);
   const entry = join(consumer, "node_modules/@dsh-worker/worker/dist/cli.js");
   const home = join(consumer, "doctor-home");
+  const tgrep =
+    process.env.DSH_WORKER_TEST_TGREP ??
+    managedTgrep(join(homedir(), ".dsh-worker-v2"));
+  mkdirSync(dirname(managedTgrep(home)), { recursive: true });
+  copyFileSync(tgrep, managedTgrep(home));
+  await run("git", ["init", "-q"]);
+  writeFileSync(join(consumer, ".gitignore"), "node_modules/\ndoctor-home/\n");
+  writeFileSync(
+    join(consumer, "probe.ts"),
+    "export const answer: number = 42;\n",
+  );
+  const tools = JSON.parse(
+    (
+      await run(process.execPath, [
+        entry,
+        "tools",
+        "--home",
+        home,
+        "--repo",
+        consumer,
+      ])
+    ).stdout,
+  );
+  assert.equal(tools.ok, true);
+  assert.equal(tools.search, "tgrep");
+  assert.equal(tools.plugins.ok, true);
+  assert.equal(tools.plugins.config.stats, true);
+  assert.deepEqual(tools.languages, ["typescript"]);
+  const composition = JSON.parse(
+    (
+      await run(process.execPath, [
+        entry,
+        "doctor",
+        "--home",
+        home,
+        "--repo",
+        consumer,
+      ])
+    ).stdout,
+  );
+  assert.equal(composition.initialized, true);
+  writeFileSync(
+    join(home, "plugins.json"),
+    JSON.stringify({ terminal: true, ptc: "both" }),
+  );
+  const optional = JSON.parse(
+    (
+      await run(process.execPath, [
+        entry,
+        "doctor",
+        "--home",
+        home,
+        "--repo",
+        consumer,
+      ])
+    ).stdout,
+  );
+  assert.equal(optional.initialized, true);
+  assert.equal(optional.closed, true);
+  rmSync(join(home, "plugins.json"));
   const doctor = () => run(process.execPath, [entry, "doctor", "--home", home]);
   for (let i = 0; i < 2; i++) {
     const result = JSON.parse((await doctor()).stdout);
@@ -87,7 +151,9 @@ try {
   passed = true;
   console.log(
     JSON.stringify({
-      installedDoctorRuns: 3,
+      installedDoctorRuns: 5,
+      codingToolsComposition: "passed",
+      optionalPluginsComposition: "passed",
       missingNativeDiagnostic: "passed",
       publicExports: "passed",
       modelCalls: 0,
