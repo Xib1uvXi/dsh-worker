@@ -163,7 +163,9 @@ describe("durable control contracts", () => {
     s.c.run(s.ticket.ticketId);
     expect(() => s.c.run(s.ticket.ticketId)).toThrow(/active/);
     expect(() => s.c.prepare({ ...s.ticket, revision: 2 })).toThrow(/active/);
-    await Promise.resolve();
+    await expect
+      .poll(() => typeof release, { timeout: 10000 })
+      .toBe("function");
     release();
     await s.c.wait(s.ticket.ticketId);
     expect(s.runtime.count).toBe(1);

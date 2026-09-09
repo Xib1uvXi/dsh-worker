@@ -4,7 +4,7 @@ A durable coding worker built on the public DeepSeek Harness TypeScript SDK. An 
 
 Use the **CLI + bundled Skill** to control tasks from an orchestrator, or the **desktop Web workspace** to create tasks, follow execution and review results. Both interfaces share validated contracts and one persistent control service.
 
-- Run independent tickets concurrently, with a fresh session and Harness home for each attempt.
+- Run independent tickets concurrently, with a separate Harness home for each attempt and explicit conversation resume for answered blockers.
 - Keep ticket revisions, execution evidence, verification and review in durable local state.
 - Bind acceptance to the exact delivered snapshot and external Spec/Standards review.
 - Configure worker skills explicitly, without requiring a particular personal skill suite.
@@ -36,7 +36,7 @@ For credential setup, Dashboard checks and a complete first task, follow [Gettin
 
 ## Run a reviewed task
 
-The service process must inherit the credential environment variables explicitly named in the ticket. Once credentials are available, start one service with dispatch enabled:
+The service process must inherit the credential references named in `execution.credentialEnv` and the task variables named in `execution.envRequired`. Once credentials are available, start one service with dispatch enabled:
 
 ```sh
 node dist/cli.js serve --enable-dispatch --capacity 2 --port 4317
@@ -57,7 +57,7 @@ node dist/cli.js verify EXAMPLE-01 --wait
 node dist/cli.js review --file review.json
 ```
 
-The [ticket template](examples/ticket.json) needs a real repository, an existing base commit, owned scope, acceptance criteria, verification commands and explicit execution settings. Replace `EXAMPLE-01` if you choose another ticket ID. A task worktree starts from the specified commit and does not inherit uncommitted changes or ignored dependencies from the primary checkout.
+The [ticket template](examples/ticket.json) needs a real repository, an existing base commit, owned scope, acceptance criteria, verification commands and explicit execution settings. Replace `EXAMPLE-01` if you choose another ticket ID. A task worktree starts from the specified commit and does not inherit uncommitted changes or ignored dependencies from the primary checkout. Use `setup` for controller-run dependency installation before the model starts. Each revision also gets a separate verification baseline; [Execution lifecycle](docs/execution-lifecycle.md) explains setup, command confinement, failure comparisons, credential redaction and answers to blocked workers.
 
 The default worker model is `deepseek-v4-pro`. CLI and API tickets may omit `execution.model`; preparation stores the resolved default. The Web form and ticket template use the same model. An explicitly supplied model is preserved.
 

@@ -22,6 +22,10 @@ export function pruneEphemeral(
     if (record.activeOperation) continue;
     for (const attempt of record.attempts) {
       if (
+        record.pendingAnswer?.attemptId === attempt.id ||
+        (record.state === "blocked" &&
+          record.attempts.at(-1)?.id === attempt.id &&
+          attempt.delivery?.outcome === "blocked") ||
         !attempt.cleanExit ||
         !attempt.endedAt ||
         Date.parse(attempt.endedAt) >= cutoff

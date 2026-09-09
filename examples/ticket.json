@@ -6,10 +6,55 @@
   "targetRepo": "/absolute/path/to/repository",
   "baseCommit": "0123456789abcdef0123456789abcdef01234567",
   "objective": "Implement the helper described in the supplied context and its behavioral tests.",
-  "scope": {"paths": ["src/", "tests/"], "exclude": ["src/generated/"]},
-  "outOfScope": ["Publishing or merging changes"],
-  "acceptance": [{"id": "AC1", "description": "The helper meets the documented input/output contract and behavioral tests pass."}],
+  "scope": {
+    "paths": [
+      "src/",
+      "tests/"
+    ],
+    "exclude": [
+      "src/generated/"
+    ]
+  },
+  "outOfScope": [
+    "Publishing or merging changes"
+  ],
+  "acceptance": [
+    {
+      "id": "AC1",
+      "description": "The helper meets the documented input/output contract and behavioral tests pass."
+    }
+  ],
   "context": "Supply the concrete helper contract before preparing this example.",
-  "verification": [{"args": ["npm", "test"], "cwd": ".", "timeoutSeconds": 300}],
-  "execution": {"provider": "deepseek-official", "model": "deepseek-v4-pro", "timeoutSeconds": 1800, "patches": [], "envRequired": ["DEEPSEEK_API_KEY"]}
+  "verification": [
+    {
+      "args": [
+        "npm",
+        "test"
+      ],
+      "cwd": ".",
+      "timeoutSeconds": 300
+    }
+  ],
+  "execution": {
+    "provider": "deepseek-official",
+    "model": "deepseek-v4-pro",
+    "timeoutSeconds": 1800,
+    "patches": [],
+    "envRequired": [],
+    "credentialEnv": [
+      "DEEPSEEK_API_KEY"
+    ]
+  },
+  "setup": [
+    {
+      "args": [
+        "npm",
+        "ci",
+        "--cache",
+        "node_modules/.cache/npm"
+      ],
+      "cwd": ".",
+      "timeoutSeconds": 300
+    }
+  ]
 }

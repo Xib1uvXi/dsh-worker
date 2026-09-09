@@ -3,12 +3,17 @@ import type {
   DeepSeekHarnessOptions,
   HarnessNotification,
 } from "@deepseek-ai/dsh-sdk-client";
-import { readFileSync } from "node:fs";
-import { dirname } from "node:path";
+import { readFileSync, cpSync, existsSync, lstatSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { codingPatch } from "./coding-tools.js";
+import { atomic, ensure } from "../../shared/src/util.js";
+import { runtimeFile } from "./plugins.js";
 import { pluginsPatch } from "./plugins.js";
+import { sessionStatsSchema } from "../../contracts/src/index.js";
+import type { SessionStats } from "../../contracts/src/index.js";
 import type { Ticket } from "../../contracts/src/index.js";
 export interface RunnerRequest {
+  resumeFromHome?: string;
   ticket: Ticket;
   attemptId: string;
   sessionId: string;
@@ -20,6 +25,7 @@ export interface RunnerRequest {
   dshBin?: string;
 }
 export type RunnerMessage =
+  | { type: "stats"; sessionId: string; stats: SessionStats }
   | {
       type: "instruction-result";
       id: string;
@@ -74,6 +80,62 @@ export async function runHarness(
       return;
     }
   }
+  if (request.resumeFromHome) {
+    try {
+      const source = join(request.resumeFromHome, "sessions");
+      ensure(
+        existsSync(source) && !lstatSync(source).isSymbolicLink(),
+        "session_missing",
+        "Previous session history is unavailable; use an explicit fresh continuation",
+      );
+      cpSync(source, join(request.harnessHome, "sessions"), {
+        recursive: true,
+        errorOnExist: true,
+        force: false,
+        filter: (path) => {
+          ensure(
+            !lstatSync(path).isSymbolicLink(),
+            "session_path",
+            "Session history must not contain symlinks",
+          );
+          return true;
+        },
+      });
+      const patch = join(dirname(request.harnessHome), "resume.patch.json");
+      atomic(
+        patch,
+        JSON.stringify([
+          {
+            insert: [
+              {
+                id: "worker-session-resume",
+                name: runtimeFile("resume-plugin"),
+                config: { sessionId: request.sessionId },
+              },
+            ],
+          },
+          {
+            id: "sdk-jsonrpc-server",
+            inject: [
+              "sdkAppStartup",
+              "loader",
+              "workerCapabilitiesReady",
+              "workerResumeReady",
+            ],
+          },
+        ]),
+      );
+      patches = [...patches.slice(0, -1), patch, ...patches.slice(-1)];
+    } catch (error) {
+      send({
+        type: "outcome",
+        receipt: false,
+        error: String(error),
+        closed: true,
+      });
+      return;
+    }
+  }
   const options: DeepSeekHarnessOptions = {
     cwd: request.worktree,
     processCwd: request.worktree,
@@ -98,6 +160,25 @@ export async function runHarness(
       : {}),
   };
   const harness = new DeepSeekHarness(options);
+  let previousStats = "";
+  const publishStats = () => {
+    try {
+      const content = readFileSync(
+        join(dirname(request.harnessHome), "stats.json"),
+        "utf8",
+      );
+      if (content === previousStats) return;
+      const observations = JSON.parse(content) as Record<string, unknown>;
+      for (const [sessionId, value] of Object.entries(observations)) {
+        const stats = sessionStatsSchema.parse(value);
+        send({ type: "stats", sessionId, stats });
+      }
+      previousStats = content;
+    } catch {
+      /* Optional telemetry never changes execution or acceptance. */
+    }
+  };
+  const statsTimer = setInterval(publishStats, 500);
   let receipt = false;
   let finishReason: string | undefined;
   let finalResponse: string | undefined;
@@ -163,6 +244,8 @@ export async function runHarness(
       error = `${error ?? ""}\nCleanup: ${String(e)}`;
     }
   }
+  clearInterval(statsTimer);
+  publishStats();
   send({
     type: "outcome",
     receipt,

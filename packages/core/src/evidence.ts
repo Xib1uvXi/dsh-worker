@@ -1,5 +1,23 @@
-import type { EvidenceBrief, TicketView } from "../../contracts/src/index.js";
+import type {
+  CommandResult,
+  CommandRun,
+  EvidenceBrief,
+  TicketView,
+} from "../../contracts/src/index.js";
 
+const commandBrief = (command: CommandResult) => {
+  const { output, outputTruncated, ...rest } = command;
+  return {
+    ...rest,
+    outputTail: output.slice(-4000),
+    outputTruncated: output.length > 4000,
+    serviceOutputTruncated: !!outputTruncated,
+  };
+};
+const runBrief = (run: CommandRun) => ({
+  ...run,
+  commands: run.commands.map(commandBrief),
+});
 // A read-only projection: claims and recorded decisions never become new evidence.
 export function evidenceBrief(r: TicketView): EvidenceBrief {
   const t = r.ticket;
@@ -9,6 +27,9 @@ export function evidenceBrief(r: TicketView): EvidenceBrief {
         .filter((v) => v.attemptId === a.id && v.revision === t.revision)
         .at(-1)
     : undefined;
+  const baseline = r.verificationBaselines?.find(
+    (b) => b.revision === t.revision,
+  );
   const delivered = a?.snapshot?.digest ?? null;
   const current = r.currentSnapshot ?? null;
   const matches = (
@@ -57,6 +78,8 @@ export function evidenceBrief(r: TicketView): EvidenceBrief {
     attempt: a
       ? {
           id: a.id,
+          resumedFrom: a.resumedFrom,
+          setup: a.setup ? runBrief(a.setup) : undefined,
           revision: a.revision,
           startedAt: a.startedAt,
           endedAt: a.endedAt,
@@ -72,6 +95,13 @@ export function evidenceBrief(r: TicketView): EvidenceBrief {
       paths: a?.snapshot?.changedPaths ?? null,
       violations: a?.snapshot?.violations ?? [],
     },
+    baseline: baseline
+      ? {
+          ...baseline,
+          commands: baseline.commands.map(commandBrief),
+          setup: baseline.setup ? runBrief(baseline.setup) : undefined,
+        }
+      : null,
     verification: v
       ? {
           id: v.id,
@@ -87,6 +117,8 @@ export function evidenceBrief(r: TicketView): EvidenceBrief {
           matchesDeliveredSnapshot: matches(v.before, v.after, delivered),
           matchesCurrentSnapshot: matches(v.before, v.after, current),
           commands: v.commands.map((c) => ({
+            comparison: c.comparison,
+            confinement: c.confinement,
             args: c.args,
             exitCode: c.exitCode,
             timedOut: c.timedOut,

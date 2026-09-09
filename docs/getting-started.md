@@ -208,3 +208,7 @@ On a new installation, only account access/key entry, local choices and the inde
 ## Coding tools before first dispatch
 
 Install tgrep with `node dist/cli.js tools install --home DIR`, then run `node dist/cli.js tools --home DIR --repo /path/to/repository` using the intended service environment. Go/Rust projects need their language servers. `doctor --repo /path/to/repository --home DIR` checks the selected plugin composition without calling a model. See [Coding tools](coding-tools.md) for controller-local configuration, prerequisites and observable checkpoints.
+
+## Task environment and blocked questions
+
+New tickets use `execution.credentialEnv` for provider keys and `execution.envRequired` for variables intentionally available to task tools. Use `setup` to install ignored dependencies before dispatch. See [Execution lifecycle](execution-lifecycle.md) for repeatable setup, command confinement, baseline comparisons and bound answers that resume a blocked conversation.

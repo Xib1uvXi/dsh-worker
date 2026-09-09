@@ -7,6 +7,7 @@ await build({
     cli: "packages/cli/src/main.ts",
     "snapshot-worker": "packages/core/src/snapshot-worker.ts",
     runner: "packages/runtime/src/runner.ts",
+    "resume-plugin": "packages/runtime/src/resume-plugin.ts",
     "lsp-launcher": "packages/runtime/src/lsp-launcher.ts",
     "coding-plugin": "packages/runtime/src/coding-plugin.ts",
     "capability-plugin": "packages/runtime/src/capability-plugin.ts",

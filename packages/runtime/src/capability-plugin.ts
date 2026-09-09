@@ -15,7 +15,7 @@ import type {
   SessionStats,
 } from "../../contracts/src/index.js";
 import { identity } from "../../shared/src/process.js";
-import { ensure } from "../../shared/src/util.js";
+import { atomic, ensure } from "../../shared/src/util.js";
 import { runtimeFile } from "./plugins.js";
 import OwnedCodeRuntime from "./owned-code-runtime.js";
 
@@ -27,6 +27,7 @@ declare module "@deepseek-ai/dsh-session" {
 declare module "@deepseek-ai/cordis" {
   interface Context {
     workerCapabilitiesReady: boolean;
+    workerStats: Record<string, SessionStats>;
   }
 }
 export const name = "worker-capabilities";
@@ -39,8 +40,10 @@ export const inject = [
 ];
 export async function apply(
   ctx: Context,
-  config: PluginSelection & { workspace: string },
+  config: PluginSelection & { workspace: string; statsPath?: string },
 ) {
+  const observations: Record<string, SessionStats> = {};
+  ctx.provide("workerStats", observations);
   if (config.stats) {
     await ctx.plugin(Stats);
     const previous = new WeakMap<Session, string>();
@@ -52,7 +55,9 @@ export async function apply(
       const encoded = JSON.stringify(stats);
       if (encoded === previous.get(session)) return;
       previous.set(session, encoded);
-      session.append("worker/stats", { stats });
+      observations[String(session.id)] = stats;
+      if (config.statsPath)
+        atomic(config.statsPath, JSON.stringify(observations));
     };
     ctx.on("session/flush", publish);
     ctx.on("session/event", (session, event) => {

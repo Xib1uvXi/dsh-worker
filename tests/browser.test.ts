@@ -566,3 +566,43 @@ it("shows whole-session timing and distinguishes missing measurements in agent c
     await c.close();
   }
 }, 15000);
+
+it("editing a legacy custom-provider ticket preserves its empty credential requirements", async () => {
+  const f = fixture();
+  f.ticket.execution.provider = "custom-provider";
+  const c = new Controller({ home: f.home, runtime: new FakeRuntime() });
+  c.prepare(f.ticket);
+  c.store.db
+    .prepare(
+      "UPDATE tickets SET data=json_remove(data, '$.ticket.execution.credentialEnv') WHERE id=?",
+    )
+    .run(f.ticket.ticketId);
+  const http = await startHttp(c, {
+    port: 0,
+    token: "b".repeat(64),
+    webDir: resolve("dist/web"),
+  });
+  const browser = await chromium.launch({ headless: true });
+  try {
+    const page = await browser.newPage();
+    page.setDefaultTimeout(5000);
+    await page.goto(http.url + "/#token=" + "b".repeat(64));
+    await page.locator(".task").click();
+    await page
+      .getByRole("button", { name: "编辑任务版本", exact: true })
+      .click();
+    await page.locator("[name=title]").fill("Updated legacy title");
+    await page
+      .getByRole("button", { name: "准备工作目录", exact: true })
+      .click();
+    await page.locator("#create").waitFor({ state: "hidden" });
+    const edited = c.status(f.ticket.ticketId).ticket;
+    expect(edited.revision).toBe(2);
+    expect(edited.execution.provider).toBe("custom-provider");
+    expect(edited.execution.credentialEnv).toEqual([]);
+  } finally {
+    await browser.close();
+    await http.close();
+    await c.close();
+  }
+}, 15000);
