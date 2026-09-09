@@ -20,6 +20,10 @@ createInterface({input:process.stdin}).on('line',line=>{
   setTimeout(()=>{
    const event=(type,data)=>notify('session.event',{sessionId,event:{type,data}});
    event('agent/inbox/spliced',{inserted:[{id:messageId}]});
+   if(input.includes('FIXTURE_PROVIDER_ERROR')){
+    event('turn/end',{reason:{kind:'error',error:{code:'TRANSPORT',message:'Provider connection failed'}}});
+    notify('session.status',{sessionId,status:'idle'});return;
+   }
    if(input.includes('FIXTURE_HANG')){spawn(process.execPath,['-e','setInterval(()=>{},1000)'],{detached:true,stdio:'ignore'}).unref();return;}
    writeFileSync(cwd+'/source.txt','implemented\n');
    const json=input.split('shape (no fences):\n')[1]?.split('\nUse outcome')[0];const delivery=JSON.parse(json);

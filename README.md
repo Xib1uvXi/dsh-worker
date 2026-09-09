@@ -97,7 +97,9 @@ The desktop workspace supports natural-language task entry with explicit reposit
 
 Execution trajectories and agent activity are available in the Web and through the CLI. Inspect messages, tool calls, parameters, results and turn boundaries by attempt or session. Reported child agents retain parent identity, but worker delegation remains disabled. Task entry does not call an extra planning model, and the UI does not invent hidden reasoning.
 
-For compact review evidence, run `brief TASK-01`; use `trajectory TASK-01`, `activity TASK-01` and `events TASK-01` for read-only execution inspection. See [Efficient orchestration](docs/orchestration.md) for assignment context, pagination and the complete review/integration loop.
+Use `version` and `health` to distinguish the CLI build from the running service. Local `validate delivery|review --file FILE` checks document format without recording a decision; delivery binding checks are described in [Execution lifecycle](docs/execution-lifecycle.md#validate-documents-before-submission).
+
+For compact review evidence, run `brief TASK-01` (or up to eight task IDs together); use `trajectory TASK-01`, `activity TASK-01` and `events TASK-01` for read-only execution inspection. See [Efficient orchestration](docs/orchestration.md) for assignment context, pagination and the complete review/integration loop.
 
 ## Coding tools
 

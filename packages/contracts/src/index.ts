@@ -2,6 +2,7 @@ import { z } from "zod";
 import { pluginsSchema } from "./plugins.js";
 import type { SessionStats } from "./plugins.js";
 export * from "./plugins.js";
+export * from "./feedback.js";
 
 export const id = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/);
 const text = z.string().trim().min(1);
@@ -83,6 +84,39 @@ export const deliverySchema = z
     blockers: z.array(text),
   })
   .strict();
+export function boundDelivery(
+  input: unknown,
+  ticket: Pick<Ticket, "ticketId" | "revision" | "acceptance">,
+  attemptId: string,
+): Delivery {
+  return deliverySchema
+    .superRefine((d, ctx) => {
+      for (const [key, expected] of Object.entries({
+        ticketId: ticket.ticketId,
+        revision: ticket.revision,
+        attemptId,
+      }))
+        if (d[key as "ticketId" | "revision" | "attemptId"] !== expected)
+          ctx.addIssue({
+            code: "custom",
+            path: [key],
+            message: "Delivery belongs to another attempt or revision",
+          });
+      const ids = d.evidence.map((e) => e.acceptanceId);
+      if (
+        new Set(ids).size !== ids.length ||
+        ticket.acceptance.some((a) => !ids.includes(a.id)) ||
+        ids.some((id) => !ticket.acceptance.some((a) => a.id === id))
+      )
+        ctx.addIssue({
+          code: "custom",
+          path: ["evidence"],
+          message:
+            "Provide exactly one evidence entry for every assigned acceptance id",
+        });
+    })
+    .parse(input);
+}
 const assessment = z
   .object({ verdict: z.enum(["pass", "fail"]), findings: z.array(text) })
   .strict();
@@ -98,6 +132,7 @@ export const reviewSchema = z
     verdict: z.enum(["accept", "request_changes", "blocked"]),
     findings: z.array(text),
     reviewer: text,
+    notes: z.array(text).optional(),
   })
   .strict()
   .superRefine((r, ctx) => {
@@ -125,7 +160,7 @@ export const reviewSchema = z
   });
 export const continuationSchema = z
   .object({
-    kind: z.enum(["restart", "answer"]).default("restart"),
+    kind: z.enum(["restart", "answer", "delivery"]).default("restart"),
     ticketId: id,
     revision: z.number().int().positive(),
     attemptId: id,
@@ -241,6 +276,11 @@ export interface VerificationBaseline extends CommandRun {
   setup?: CommandRun;
 }
 export interface Attempt {
+  deliveryOnlyFrom?: { attemptId: string; snapshotDigest: string };
+  failures?: AttemptFailures;
+  deadlineAt?: string;
+  turn?: number;
+  controllerBuild?: BuildInfo;
   setup?: CommandRun;
   resumedFrom?: string;
   id: string;
@@ -275,6 +315,7 @@ export interface Verification {
   error?: string;
 }
 export interface TicketRecord {
+  pendingDelivery?: Continuation;
   verificationBaselines?: VerificationBaseline[];
   pendingAnswer?: Continuation;
   archived?: boolean;
@@ -303,6 +344,53 @@ export interface WorkerInstruction {
   attemptId?: string;
   messageId?: string;
   error?: string;
+  receivedAt?: string;
+  consumption?: {
+    time: string;
+    messageId: string;
+    turn?: number;
+    eventSeq?: number;
+  };
+}
+export interface ProviderError {
+  code?: string;
+  message: string;
+}
+export interface AttemptFailures {
+  primary:
+    | "cancelled"
+    | "timeout"
+    | "provider"
+    | "execution"
+    | "cleanup"
+    | "snapshot"
+    | "delivery";
+  execution?: string;
+  provider?: ProviderError;
+  cleanup?: string;
+  snapshot?: string;
+  delivery?: string;
+}
+export interface BuildInfo {
+  version: string;
+  commit: string | null;
+  sourceDigest: string | null;
+  builtAt: string | null;
+}
+export interface InstructionBrief
+  extends Pick<
+    WorkerInstruction,
+    | "id"
+    | "revision"
+    | "attemptId"
+    | "status"
+    | "time"
+    | "receivedAt"
+    | "messageId"
+    | "consumption"
+    | "error"
+  > {
+  unconsumedSeconds: number | null;
 }
 export interface TrajectoryEntry {
   seq: number;
@@ -354,6 +442,8 @@ export interface CommandRunBrief extends Omit<CommandRun, "commands"> {
   commands: CommandBrief[];
 }
 export interface EvidenceBrief {
+  instructions: InstructionBrief[];
+  execution: { deadlineAt: string | null; remainingSeconds: number | null };
   schemaVersion: 2;
   ticket: Pick<
     Ticket,
@@ -393,6 +483,11 @@ export interface EvidenceBrief {
         | "cleanExit"
         | "error"
         | "resumedFrom"
+        | "failures"
+        | "deadlineAt"
+        | "controllerBuild"
+        | "turn"
+        | "deliveryOnlyFrom"
       > & { setup?: CommandRunBrief })
     | null;
   workerReport: Delivery | null;
@@ -463,11 +558,24 @@ export interface SessionSummary {
   liveness: "unknown";
 }
 export interface Overview {
+  build?: BuildInfo;
   tickets: TicketView[];
   capacity: number;
   active: number;
   dispatchEnabled: boolean;
   runtimeVersion: string;
+}
+export const briefIdsSchema = z
+  .array(id)
+  .min(1)
+  .max(8)
+  .refine(
+    (ids) => new Set(ids).size === ids.length,
+    "Ticket ids must be unique",
+  );
+export interface BatchBrief {
+  briefs: EvidenceBrief[];
+  errors: { ticketId: string; code: string; message: string }[];
 }
 export interface ApiError {
   error: { code: string; message: string };

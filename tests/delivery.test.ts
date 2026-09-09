@@ -1,6 +1,9 @@
 import { expect, it } from "vitest";
 import { deliveryDocument } from "../packages/runtime/src/delivery.js";
-import { deliverySchema } from "../packages/contracts/src/index.js";
+import {
+  deliverySchema,
+  boundDelivery,
+} from "../packages/contracts/src/index.js";
 
 const doc = {
   schemaVersion: 2,
@@ -14,6 +17,28 @@ const doc = {
   notRun: [],
   blockers: [],
 };
+it("validates current binding, string lists and exactly the assigned acceptance evidence", () => {
+  const ticket = {
+    ticketId: doc.ticketId,
+    revision: 1,
+    acceptance: [{ id: "AC1", description: "Required" }],
+  };
+  expect(boundDelivery(doc, ticket, doc.attemptId)).toEqual(doc);
+  for (const wrong of [
+    { ...doc, attemptId: "old-attempt" },
+    { ...doc, notRun: [{ command: "live" }] },
+    { ...doc, evidence: [] },
+    { ...doc, evidence: [...doc.evidence, ...doc.evidence] },
+    {
+      ...doc,
+      evidence: [
+        ...doc.evidence,
+        { acceptanceId: "UNKNOWN", evidence: "unassigned" },
+      ],
+    },
+  ])
+    expect(() => boundDelivery(wrong, ticket, doc.attemptId)).toThrow();
+});
 it("reads one strict delivery document from real-model prose or Markdown wrappers", () => {
   for (const text of [
     JSON.stringify(doc),

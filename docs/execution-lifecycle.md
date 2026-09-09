@@ -61,6 +61,30 @@ The service must inherit the named variables. `credentialEnv` references are sup
 
 At operation admission the worker captures the current values of the named variables. Before persisting notifications, runtime results, stdout/stderr and controller command evidence, exact occurrences are replaced with `[REDACTED:NAME]`. Streaming replacement handles values split across output chunks and runs before output truncation. This is bounded value replacement, not heuristic detection; encoded, transformed or unlisted values are outside its coverage. The private credential store is removed after proven runtime cleanup. Historical evidence and source/snapshot artifacts are not rewritten, and native Harness session logs retain their original conversation for resume; keep the controller home private.
 
+## Repair only the delivery report
+
+When an attempt ended cleanly with a receipt and an unchanged in-scope snapshot but no valid delivery, an explicit continuation may use `kind: "delivery"`. Use the same binding fields as the answer example below. The task must be interrupted, and current instructions must have no unconsumed or uncertain work. Inspect the implementation and historical evidence before choosing this mode; it does not mean the implementation is complete.
+
+Recovery records intent and returns to ready without dispatch. The next `run` uses a new attempt and a fresh session, records `deliveryOnlyFrom`, and instructs the worker to report existing evidence without source edits or new checks. Reused command claims must identify their earlier attempt. Setup must preserve the frozen snapshot, and a final source snapshot change invalidates the report. Additional implementation instructions are refused; use an explicit restart when code needs changes. Unchanged source alone never substitutes for actual evidence.
+
+Before dispatch, an explicit `kind: "restart"` may replace a pending delivery-only continuation while the task is ready. Bind it to the current revision, previous attempt and inspected current snapshot, including any external changes. This clears the pending report-only intent without dispatching; the Web recovery form exposes the same restart action.
+
+The corrected delivery only reaches awaiting review. Controller verification and external review remain required for the new attempt; no prior approval is automatically transferred. This mode does not replay uncertain sends or silently reuse an old attempt ID.
+
+## Validate documents before submission
+
+These commands work without a service and record no decision:
+
+```sh
+dsh-worker validate delivery --file delivery.json
+dsh-worker validate delivery --file delivery.json --ticket-file ticket.json --attempt CURRENT_ATTEMPT_ID
+dsh-worker validate review --file review.json
+```
+
+`--file -` reads JSON from stdin. Validation returns JSON with `ok`; schema failures include field paths and exit 1. Without `--ticket-file` and `--attempt`, delivery validation checks only the schema. With both, it also checks the exact ticket/revision/attempt and exactly one evidence entry for each assigned acceptance ID. Snapshot freshness and runtime acceptance still belong to the service.
+
+Delivery `notRun` and `blockers` are arrays of strings, not objects. A review's `findings` arrays contain unresolved findings; accepting reviews require them to be empty with Spec and Standards both passing. Optional review `notes` hold positive evidence and rationale without misclassifying them as unresolved defects.
+
 ## Answer a blocked worker
 
 After inspecting a clean blocked delivery and its current snapshot, submit:

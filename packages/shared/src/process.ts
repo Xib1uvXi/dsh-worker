@@ -8,10 +8,46 @@ import { delay, ensure } from "./util.js";
 interface Ps extends ProcessIdentity {
   ppid: number;
 }
+// ps lstart is locale-sensitive. Keep new identities stable and recognize the
+// two English layouts used by older controllers without rewriting their locks.
+function canonicalStart(start: string): string {
+  const parts = start.trim().split(/\s+/);
+  const months = [
+    "Jan",
+    "Feb",
+    "Mar",
+    "Apr",
+    "May",
+    "Jun",
+    "Jul",
+    "Aug",
+    "Sep",
+    "Oct",
+    "Nov",
+    "Dec",
+  ];
+  if (parts.length !== 5) return start;
+  const [weekday, second, third, time, year] = parts;
+  if (
+    !/^(Mon|Tue|Wed|Thu|Fri|Sat|Sun)$/.test(weekday!) ||
+    !/^\d{2}:\d{2}:\d{2}$/.test(time!) ||
+    !/^\d{4}$/.test(year!)
+  )
+    return start;
+  const month = months.includes(second!) ? second : third;
+  const day = month === second ? third : second;
+  return months.includes(month!) && /^\d{1,2}$/.test(day!)
+    ? `${weekday} ${month} ${Number(day)} ${time} ${year}`
+    : start;
+}
+function sameProcess(a: ProcessIdentity, b: ProcessIdentity) {
+  return a.pid === b.pid && canonicalStart(a.start) === canonicalStart(b.start);
+}
 export function processTable(): Ps[] {
   const output = execFileSync("ps", ["-axo", "pid=,ppid=,lstart="], {
     encoding: "utf8",
     maxBuffer: 8 * 1024 * 1024,
+    env: { ...process.env, LC_ALL: "C" },
   });
   return parseTable(output);
 }
@@ -25,7 +61,7 @@ export function identity(pid: number): ProcessIdentity | undefined {
   return processTable().find((p) => p.pid === pid);
 }
 export function alive(p: ProcessIdentity): boolean {
-  return processTable().some((q) => q.pid === p.pid && q.start === p.start);
+  return processTable().some((q) => sameProcess(q, p));
 }
 // Environment marker discovers detached/reparented descendants without using SDK private fields.
 export function marked(
@@ -80,9 +116,7 @@ function descendants(
   known: ProcessIdentity[],
   marked: ProcessIdentity[],
 ) {
-  const current = table.filter((p) =>
-    known.some((q) => q.pid === p.pid && q.start === p.start),
-  );
+  const current = table.filter((p) => known.some((q) => sameProcess(q, p)));
   const found = new Map<number, ProcessIdentity>(
     current.map((p) => [p.pid, p]),
   );
@@ -109,6 +143,7 @@ export async function discoverAsync(
     (
       await promisify(execFile)("ps", ["-axo", "pid=,ppid=,lstart="], {
         maxBuffer: 8 * 1024 * 1024,
+        env: { ...process.env, LC_ALL: "C" },
       })
     ).stdout,
   );

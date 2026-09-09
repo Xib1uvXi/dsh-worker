@@ -131,9 +131,10 @@ export class Store {
     });
   }
   event(ticketId: string, type: string, data: unknown) {
-    this.db
+    const result = this.db
       .prepare("INSERT INTO journal(time,ticket_id,type,data) VALUES(?,?,?,?)")
       .run(now(), ticketId, type, JSON.stringify(data));
+    return Number(result.lastInsertRowid);
   }
   trajectoryEvents(after: number, limit: number, ticketId: string) {
     return this.events(after, limit, ticketId, true);

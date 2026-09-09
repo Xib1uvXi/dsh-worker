@@ -27,6 +27,12 @@ Verifier exceptions are recorded on their verification record and survive recove
 
 Historical errors remain after recovery and acceptance. Use `currentState` and `diagnose.ok` to distinguish current problems from past failures. An attempt's recorded processes are durable evidence, not a fresh liveness scan. Summary snapshot-match status is `null` when that query has not captured the current checkout; detailed `status` and `diagnose` do capture it.
 
+New attempts retain `failures.primary` and separate provider, execution, cleanup, snapshot and delivery details. Provider codes such as `TRANSPORT` survive the native turn result. Cancellation and deadline expiry have their own primary messages; absence of final JSON after such a stop is not reported as the primary failure. `errors` exposes these sources individually. Legacy flattened errors are retained as recorded, not retrospectively reclassified.
+
+Process start observations use a fixed locale and recognize legacy English day/month layouts. An actual PID/start mismatch still fails closed. Do not delete locks or restart a reachable service solely to work around a differently formatted process timestamp.
+
+Use `validate delivery|review --file FILE` for local format checks. For a frozen implementation whose final report was interrupted or malformed, inspect the [delivery-only recovery conditions](execution-lifecycle.md#repair-only-the-delivery-report). A missing report does not establish implementation success.
+
 ## Common cases
 
 - **`service_missing`**: Check the control home and whether its service was started. Do not create a second service for an already-running home.

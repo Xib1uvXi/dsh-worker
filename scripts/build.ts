@@ -1,5 +1,45 @@
 import { build } from "esbuild";
-import { mkdir, copyFile, chmod, rm } from "node:fs/promises";
+import {
+  mkdir,
+  copyFile,
+  chmod,
+  rm,
+  readdir,
+  readFile,
+} from "node:fs/promises";
+import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
+const inputs = [
+  "package.json",
+  "package-lock.json",
+  ...(await readdir(".")).filter((p) => /^tsconfig.*\.json$/.test(p)),
+];
+for (const dir of ["packages", "scripts"])
+  for (const file of await readdir(dir, { recursive: true }))
+    if (/\.(ts|js|html|css)$/.test(file)) inputs.push(`${dir}/${file}`);
+const digest = createHash("sha256");
+for (const file of inputs.sort()) {
+  digest
+    .update(file)
+    .update("\0")
+    .update(await readFile(file))
+    .update("\0");
+}
+let commit: string | null = null;
+try {
+  commit = execFileSync("git", ["rev-parse", "HEAD"], {
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "ignore"],
+  }).trim();
+} catch {
+  /* Packed source may have no Git metadata. */
+}
+const buildInfo = {
+  version: JSON.parse(await readFile("package.json", "utf8")).version as string,
+  commit,
+  sourceDigest: digest.digest("hex"),
+  builtAt: new Date().toISOString(),
+};
 await rm("dist", { recursive: true, force: true });
 await mkdir("dist/web", { recursive: true });
 await build({
@@ -25,6 +65,7 @@ await build({
   format: "esm",
   packages: "external",
   sourcemap: true,
+  define: { __WORKER_BUILD__: JSON.stringify(buildInfo) },
 });
 await build({
   entryPoints: ["packages/web/src/app.ts"],

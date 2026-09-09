@@ -296,13 +296,14 @@ it("resumes a blocked conversation through the actual SDK and persistence with a
   expect(next.marker).not.toBe(old.marker);
   expect(next.sessionId).toBe(old.sessionId);
   expect(next.resumedFrom).toBe(old.id);
-  const admitted = JSON.parse(
-    readFileSync(join(f.home, "runs", next.id, "input.json"), "utf8"),
+  const execution = JSON.parse(
+    readFileSync(join(f.home, "runs", next.id, "execution.json"), "utf8"),
   );
   const request = JSON.parse(
     readFileSync(join(f.home, "runs", next.id, "request.json"), "utf8"),
   );
-  expect(admitted.promptHash).toBe(hash(request.prompt));
+  expect(execution.promptHash).toBe(hash(request.prompt));
+  expect(execution.deadlineAt).toBe(next.deadlineAt);
   expect(next.delivery?.summary).toContain("Resumed prior-investigation-7419");
   expect(marked(old.marker)).toEqual([]);
   expect(marked(next.marker)).toEqual([]);

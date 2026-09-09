@@ -17,7 +17,7 @@ createInterface({ input: process.stdin }).on('line', line => {
   reply({ messageId });
   setTimeout(() => {
     event('agent/inbox/spliced', { inserted: [{ id: messageId }] });
-    event('user/message', { content: [{ type: 'text', text }] });
+    event('user/message', { id: messageId, content: [{ type: 'text', text }] });
     if (prompts === 1) {
       delivery = JSON.parse(text.split('shape (no fences):\n')[1].split('\nUse outcome')[0]);
       notify('session.status', { sessionId, status: 'running' });

@@ -1,4 +1,5 @@
 import { DeepSeekHarness } from "@deepseek-ai/dsh-sdk-client";
+import type { ProviderError } from "../../contracts/src/index.js";
 import type {
   DeepSeekHarnessOptions,
   HarnessNotification,
@@ -13,6 +14,7 @@ import { sessionStatsSchema } from "../../contracts/src/index.js";
 import type { SessionStats } from "../../contracts/src/index.js";
 import type { Ticket } from "../../contracts/src/index.js";
 export interface RunnerRequest {
+  deadlineAt?: string;
   resumeFromHome?: string;
   ticket: Ticket;
   attemptId: string;
@@ -38,6 +40,7 @@ export type RunnerMessage =
       type: "outcome";
       receipt: boolean;
       finishReason?: string;
+      providerError?: ProviderError;
       finalResponse?: string;
       error?: string;
       closed: boolean;
@@ -181,6 +184,7 @@ export async function runHarness(
   const statsTimer = setInterval(publishStats, 500);
   let receipt = false;
   let finishReason: string | undefined;
+  let providerError: ProviderError | undefined;
   let finalResponse: string | undefined;
   let error: string | undefined;
   let closed = false;
@@ -219,14 +223,27 @@ export async function runHarness(
         ) {
           const event = notification.params.event as {
             type?: string;
-            data?: { reason?: { kind?: string } };
+            data?: {
+              reason?: {
+                kind?: string;
+                error?: { code?: string; message?: string };
+              };
+            };
           };
           if (event.type === "agent/inbox/spliced") {
             receipt = true;
             accepting = true;
           }
-          if (event.type === "turn/end")
+          if (event.type === "turn/start") providerError = undefined;
+          if (event.type === "turn/end") {
             finishReason = event.data?.reason?.kind;
+            const cause = event.data?.reason?.error;
+            if (finishReason === "error" && typeof cause?.message === "string")
+              providerError = {
+                message: cause.message,
+                ...(typeof cause.code === "string" ? { code: cause.code } : {}),
+              };
+          }
         }
       },
     });
@@ -250,6 +267,7 @@ export async function runHarness(
     type: "outcome",
     receipt,
     finishReason,
+    providerError,
     finalResponse,
     error,
     closed,

@@ -49,7 +49,7 @@ export function apply(ctx, config) {
         .split("Execution workspace (controller-owned):\n")[1]
         ?.split("\n")[0],
     );
-    if (input.startsWith("Answer to the previous blocker:")) {
+    if (input.includes("\n\nAnswer to the previous blocker:")) {
       if (
         prompts.length < 2 ||
         !messages.some(

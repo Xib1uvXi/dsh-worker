@@ -11,6 +11,8 @@ import type {
   EvidenceBrief,
   TrajectoryPage,
   JournalPage,
+  BatchBrief,
+  BuildInfo,
 } from "../packages/contracts/src/index.js";
 import { runtimeSchema } from "../packages/contracts/src/index.js";
 import type {
@@ -24,6 +26,119 @@ type Issues = ReturnType<typeof errors>;
 type Diagnosis = ReturnType<typeof diagnose>;
 type Health = Awaited<ReturnType<typeof health>>;
 const command = resolve("dist/cli.js");
+it("validates delivery and review offline and checks an explicitly supplied binding", async () => {
+  const f = fixture();
+  const ticketFile = join(f.root, "ticket.json");
+  writeFileSync(ticketFile, JSON.stringify(f.ticket));
+  const doc = {
+    schemaVersion: 2,
+    ticketId: f.ticket.ticketId,
+    revision: 1,
+    attemptId: "attempt-now",
+    outcome: "submitted",
+    summary: "Done",
+    evidence: [{ acceptanceId: "AC1", evidence: "Checked" }],
+    commands: [],
+    notRun: [],
+    blockers: [],
+  };
+  const run = (input: unknown, extra: string[] = []) =>
+    invoke<{
+      ok: boolean;
+      bindingChecked: boolean;
+      issues?: { path: (string | number)[] }[];
+    }>(
+      join(f.root, "no-service"),
+      ["validate", "delivery", "--file", "-", ...extra],
+      input,
+    );
+  expect((await run(doc)).value).toMatchObject({
+    ok: true,
+    bindingChecked: false,
+  });
+  expect(
+    (await run(doc, ["--ticket-file", ticketFile, "--attempt", "attempt-now"]))
+      .value,
+  ).toMatchObject({ ok: true, bindingChecked: true });
+  const wrong = await run(doc, [
+    "--ticket-file",
+    ticketFile,
+    "--attempt",
+    "new-attempt",
+  ]);
+  expect(wrong.code).toBe(1);
+  expect(wrong.value.issues?.[0]?.path).toEqual(["attemptId"]);
+  const list = await run({ ...doc, notRun: [{}] });
+  expect(list.code).toBe(1);
+  expect(list.value.issues?.[0]?.path).toEqual(["notRun", 0]);
+  const review = {
+    schemaVersion: 2,
+    ticketId: f.ticket.ticketId,
+    revision: 1,
+    attemptId: "attempt-now",
+    snapshotDigest: "a".repeat(64),
+    spec: { verdict: "pass", findings: [] },
+    standards: { verdict: "pass", findings: [] },
+    verdict: "accept",
+    findings: [],
+    reviewer: "Independent reviewer",
+    notes: ["Checked the evidence"],
+  };
+  expect(
+    (
+      await invoke<{ ok: boolean }>(
+        f.home,
+        ["validate", "review", "--file", "-"],
+        review,
+      )
+    ).value.ok,
+  ).toBe(true);
+  expect(
+    (
+      await invoke(f.home, ["validate", "review", "--file", "-"], {
+        ...review,
+        findings: ["Unresolved defect"],
+      })
+    ).code,
+  ).toBe(1);
+  const version = await invoke<BuildInfo>(f.home, ["version"]);
+  expect(version.value.sourceDigest).toMatch(/^[a-f0-9]{64}$/);
+  expect(version.value.commit).toMatch(/^[a-f0-9]{40}$/);
+});
+
+it("returns bounded batch briefs with per-ticket errors and no dispatch or state mutation", async () => {
+  const s = await setup();
+  try {
+    s.c.prepare(s.ticket);
+    s.c.prepare({ ...s.ticket, ticketId: "SECOND" });
+    const before = s.c.store.events(0).length;
+    const result = await s.cli<BatchBrief>([
+      "brief",
+      s.ticket.ticketId,
+      "SECOND",
+      "MISSING",
+    ]);
+    expect(result.code).toBe(1);
+    expect(result.value.briefs.map((b) => b.ticket.ticketId)).toEqual([
+      s.ticket.ticketId,
+      "SECOND",
+    ]);
+    expect(result.value.errors[0]?.ticketId).toBe("MISSING");
+    expect(s.runtime.count).toBe(0);
+    expect(s.c.store.events(0)).toHaveLength(before);
+    expect(
+      (
+        await s.cli([
+          "brief",
+          ...Array.from({ length: 9 }, (_, i) => `TASK-${i}`),
+        ])
+      ).code,
+    ).toBe(1);
+    expect((await s.cli(["brief", "SECOND", "SECOND"])).code).toBe(1);
+  } finally {
+    await s.close();
+  }
+});
 function invoke<T = TicketView>(home: string, args: string[], input?: unknown) {
   return new Promise<{ code: number | null; value: T; stderr: string }>(
     (resolve, reject) => {

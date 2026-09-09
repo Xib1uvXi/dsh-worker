@@ -92,6 +92,8 @@ it("uses the actual SDK prompt API for live instructions, pairs tool events, and
     await c.action(command);
     const result = await c.wait(f.ticket.ticketId);
     expect(result.state, result.error).toBe("awaiting_review");
+    expect(result.instructions?.[0]?.consumption?.messageId).toBe("message-2");
+    const consumption = result.instructions?.[0]?.consumption;
     const events = trajectory(c.store, f.ticket.ticketId, 0);
     expect(
       events.entries.filter((e) => e.callId === "read-1").map((e) => e.kind),
@@ -99,6 +101,9 @@ it("uses the actual SDK prompt API for live instructions, pairs tool events, and
     expect(events.agents[0]?.status).toBe("ended");
     await c.close();
     c = new Controller({ home: f.home, runtime: new FakeRuntime() });
+    expect(c.status(f.ticket.ticketId).instructions?.[0]?.consumption).toEqual(
+      consumption,
+    );
     expect(trajectory(c.store, f.ticket.ticketId, 0)).toEqual(events);
   } finally {
     await c.close();

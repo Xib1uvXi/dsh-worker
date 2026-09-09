@@ -2,6 +2,12 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { ZodError } from "zod";
 import type { TicketView } from "../../contracts/src/index.js";
+import {
+  instructionBriefs,
+  executionBrief,
+} from "../../contracts/src/feedback.js";
+import { buildInfo } from "../../shared/src/build.js";
+import type { BuildInfo } from "../../contracts/src/index.js";
 import { alive } from "../../shared/src/process.js";
 import { workflow } from "../../runtime/src/policy.js";
 import { ClientError, WorkerClient } from "./client.js";
@@ -25,6 +31,8 @@ export function summary(r: TicketView) {
   const v = r.verifications.filter((v) => v.attemptId === a?.id).at(-1);
   return {
     ticketId: r.ticket.ticketId,
+    instructions: instructionBriefs(r),
+    execution: executionBrief(r),
     title: r.ticket.title,
     revision: r.ticket.revision,
     state: r.state,
@@ -46,6 +54,8 @@ export function summary(r: TicketView) {
           finishReason: a.finishReason ?? null,
           cleanExit: a.cleanExit,
           recordedProcesses: a.processes,
+          failures: a.failures,
+          controllerBuild: a.controllerBuild,
         }
       : null,
     verification: v
@@ -71,6 +81,9 @@ interface Issue {
   source:
     | "task"
     | "execution"
+    | "provider"
+    | "snapshot"
+    | "cleanup"
     | "delivery"
     | "scope"
     | "verification"
@@ -81,6 +94,8 @@ interface Issue {
   recordId?: string;
   time?: string;
   message: string;
+  code?: string;
+  primary?: boolean;
   command?: string[];
   exitCode?: number | null;
   timedOut?: boolean;
@@ -103,7 +118,33 @@ export function errors(r: TicketView, attemptId?: string, full = false) {
       revision: a.revision,
       time: a.endedAt ?? a.startedAt,
     };
-    if (a.error)
+    if (a.failures) {
+      const { primary, provider, ...details } = a.failures;
+      if (primary === "cancelled" || primary === "timeout")
+        issues.push({
+          ...common,
+          source: "execution",
+          message: a.error!,
+          primary: true,
+          code: primary,
+        });
+      if (provider)
+        issues.push({
+          ...common,
+          source: "provider",
+          message: provider.message,
+          code: provider.code,
+          primary: primary === "provider",
+        });
+      for (const [source, message] of Object.entries(details))
+        if (message)
+          issues.push({
+            ...common,
+            source: source as Issue["source"],
+            message,
+            primary: primary === source,
+          });
+    } else if (a.error)
       issues.push({ ...common, source: "execution", message: a.error });
     if (
       a.endedAt &&
@@ -299,6 +340,7 @@ export async function health(home: string) {
         active: number;
         dispatchEnabled: boolean;
         runtimeVersion: string;
+        build?: BuildInfo;
       }
     | undefined;
   let client: WorkerClient | undefined;
@@ -374,6 +416,7 @@ export async function health(home: string) {
         active: o.active,
         dispatchEnabled: o.dispatchEnabled,
         runtimeVersion: o.runtimeVersion,
+        build: o.build,
       };
       checks.push({
         name: "connection",
@@ -409,6 +452,7 @@ export async function health(home: string) {
   return {
     ok: !checks.some((c) => c.status === "fail"),
     home,
+    clientBuild: buildInfo,
     service: service ?? null,
     checks,
     notes: [

@@ -9,8 +9,12 @@ import type {
   EvidenceBrief,
   TrajectoryPage,
   JournalPage,
+  BatchBrief,
 } from "../../contracts/src/index.js";
-import { evidenceQuerySchema } from "../../contracts/src/index.js";
+import {
+  evidenceQuerySchema,
+  briefIdsSchema,
+} from "../../contracts/src/index.js";
 import { ensure, hash } from "../../shared/src/util.js";
 export class ClientError extends Error {
   constructor(
@@ -137,6 +141,11 @@ export class WorkerClient {
     return this.request<EvidenceBrief>(
       `/api/tickets/${encodeURIComponent(id)}/brief`,
     );
+  }
+  briefs(ids: string[]) {
+    const search = new URLSearchParams();
+    for (const id of briefIdsSchema.parse(ids)) search.append("ticket", id);
+    return this.request<BatchBrief>(`/api/briefs?${search}`);
   }
   trajectory(id: string, query: EvidenceQuery = {}, activityOnly = false) {
     return this.request<TrajectoryPage>(
