@@ -1,11 +1,57 @@
-import { afterEach, expect, it } from "vitest";
+import { afterEach, expect, it, vi } from "vitest";
+import { execFileSync } from "node:child_process";
 import { resolve, join } from "node:path";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { Controller } from "../packages/core/src/controller.js";
 import { SdkRuntime } from "../packages/runtime/src/adapter.js";
-import { marked, cleanEnv } from "../packages/shared/src/process.js";
+import {
+  marked,
+  cleanEnv,
+  identity,
+  alive,
+  discoverAsync,
+} from "../packages/shared/src/process.js";
 import { fixture } from "./helpers.js";
 const controllers: Controller[] = [];
+it("recognizes one live process across locales and legacy English start layouts", async () => {
+  const legacy = execFileSync(
+    "ps",
+    ["-p", String(process.pid), "-o", "lstart="],
+    {
+      encoding: "utf8",
+      env: { ...process.env, LC_ALL: "en_GB.UTF-8" },
+    },
+  ).trim();
+  try {
+    vi.stubEnv("LC_ALL", "en_GB.UTF-8");
+    const first = identity(process.pid)!;
+    vi.stubEnv("LC_ALL", "C");
+    expect(identity(process.pid)).toEqual(first);
+    expect(alive({ pid: process.pid, start: legacy })).toBe(true);
+    expect(alive({ pid: process.pid, start: "Wed Sep  9 00:00:00 1970" })).toBe(
+      false,
+    );
+    expect(
+      await discoverAsync("00000000-0000-0000-0000-000000000000", [
+        { pid: process.pid, start: legacy },
+      ]),
+    ).toContainEqual({ pid: process.pid, start: identity(process.pid)!.start });
+  } finally {
+    vi.unstubAllEnvs();
+  }
+});
+
+it("retains the native provider failure instead of reporting a missing delivery", async () => {
+  const s = setup();
+  s.ticket.context = "FIXTURE_PROVIDER_ERROR";
+  s.c.prepare(s.ticket);
+  s.c.run(s.ticket.ticketId);
+  const result = await s.c.wait(s.ticket.ticketId);
+  expect(result.state).toBe("interrupted");
+  expect(result.error).toContain("TRANSPORT");
+  expect(result.error).not.toContain("JSON object");
+  expect(result.attempts[0]?.failures?.provider?.code).toBe("TRANSPORT");
+}, 20000);
 afterEach(async () => {
   for (const c of controllers.splice(0)) await c.close();
 });
@@ -71,6 +117,9 @@ it("cancels the owned runtime and detached descendants without a cancel RPC", as
   const t = await s.c.cancel(s.ticket.ticketId);
   expect(t.state).toBe("interrupted");
   expect(t.attempts[0]?.termination).toBe("cancelled");
+  expect(t.error).toMatch(/cancelled/i);
+  expect(t.error).not.toContain("Delivery");
+  expect(t.attempts[0]?.deadlineAt).toBeDefined();
   expect(marked(t.attempts[0]!.marker)).toHaveLength(0);
 }, 20000);
 it("enforces an outer deadline on receipt-to-idle waiting", async () => {
@@ -82,6 +131,8 @@ it("enforces an outer deadline on receipt-to-idle waiting", async () => {
   const t = await s.c.wait(s.ticket.ticketId);
   expect(t.state).toBe("interrupted");
   expect(t.attempts[0]?.termination).toBe("timeout");
+  expect(t.error).toMatch(/deadline|timed out/i);
+  expect(t.error).not.toContain("Delivery");
   expect(marked(t.attempts[0]!.marker)).toHaveLength(0);
 }, 20000);
 it("uses an explicit scrubbed environment and rejects reserved config overrides", () => {

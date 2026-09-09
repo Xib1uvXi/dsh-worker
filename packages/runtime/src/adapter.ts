@@ -2,7 +2,10 @@ import { fork } from "node:child_process";
 import { appendFileSync, rmSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { join } from "node:path";
-import type { ProcessIdentity } from "../../contracts/src/index.js";
+import type {
+  ProcessIdentity,
+  ProviderError,
+} from "../../contracts/src/index.js";
 import { atomic, delay, ensure } from "../../shared/src/util.js";
 import {
   discover,
@@ -18,6 +21,7 @@ import {
 } from "./credentials.js";
 import type { RunnerRequest, RunnerMessage } from "./runner.js";
 export interface RuntimeOutcome {
+  providerError?: ProviderError;
   receipt: boolean;
   finishReason?: string;
   finalResponse?: string;
@@ -176,13 +180,11 @@ export class SdkRuntime implements RuntimeAdapter {
     }, 500);
     let killing = false;
     let cancelledAt: number | undefined;
-    const startTime = Date.now();
+    const deadline = request.deadlineAt
+      ? Date.parse(request.deadlineAt)
+      : Date.now() + request.ticket.execution.timeoutSeconds * 1000;
     const watchdog = setInterval(() => {
-      if (
-        Date.now() - startTime >
-          request.ticket.execution.timeoutSeconds * 1000 &&
-        termination === "completed"
-      ) {
+      if (Date.now() > deadline && termination === "completed") {
         termination = "timeout";
         if (child.connected) child.send("cancel");
       }
@@ -273,6 +275,7 @@ export class SdkRuntime implements RuntimeAdapter {
     return secrets.value({
       receipt: outcome?.receipt ?? false,
       finishReason: outcome?.finishReason,
+      providerError: outcome?.providerError,
       finalResponse: outcome?.finalResponse,
       error:
         outcome?.error ??

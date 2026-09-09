@@ -73,6 +73,131 @@ it("releases recovery capacity when malformed delivery already exited cleanly", 
   expect((await s.c.wait(s.ticket.ticketId)).state).toBe("awaiting_review");
   expect(s.c.overview().active).toBe(0);
 });
+it.each([false, true])(
+  "binds delivery-only recovery to the frozen source (source changed: %s)",
+  async (change) => {
+    const s = setup();
+    s.runtime.handler = async () => ({
+      finalResponse: "No structured delivery",
+    });
+    s.c.prepare(s.ticket);
+    s.c.run(s.ticket.ticketId);
+    const failed = await s.c.wait(s.ticket.ticketId);
+    await s.c.recover({
+      kind: "delivery",
+      ticketId: s.ticket.ticketId,
+      revision: 1,
+      attemptId: failed.attempts[0]!.id,
+      snapshotDigest: failed.currentSnapshot,
+      instruction: "Report existing evidence; do not edit source",
+    });
+    await expect(
+      s.c.action({
+        action: "instruct",
+        ticketId: s.ticket.ticketId,
+        revision: 1,
+        instructionId: "more-work",
+        instruction: "Edit again",
+      }),
+    ).rejects.toThrow(/Delivery-only/);
+    s.runtime.handler = async (request) => {
+      expect(request.prompt).toContain("DELIVERY-ONLY RECOVERY");
+      if (change)
+        writeFileSync(
+          join(request.worktree, "source.txt"),
+          "unexpected change\n",
+        );
+      return {};
+    };
+    s.c.run(s.ticket.ticketId);
+    const result = await s.c.wait(s.ticket.ticketId);
+    expect(result.attempts[1]?.deliveryOnlyFrom?.snapshotDigest).toBe(
+      failed.currentSnapshot,
+    );
+    expect(result.state).toBe(change ? "interrupted" : "awaiting_review");
+    if (change)
+      expect(result.error).toContain("changed the frozen source snapshot");
+    else {
+      expect(result.currentSnapshot).toBe(failed.currentSnapshot);
+      expect(result.verifications).toHaveLength(0);
+      expect(result.reviews).toHaveLength(0);
+    }
+  },
+);
+it("rejects a stale delivery-only recovery before dispatch", async () => {
+  const s = setup();
+  s.runtime.handler = async () => ({ finalResponse: "No structured delivery" });
+  s.c.prepare(s.ticket);
+  s.c.run(s.ticket.ticketId);
+  const failed = await s.c.wait(s.ticket.ticketId);
+  await s.c.recover({
+    kind: "delivery",
+    ticketId: s.ticket.ticketId,
+    revision: 1,
+    attemptId: failed.attempts[0]!.id,
+    snapshotDigest: failed.currentSnapshot,
+    instruction: "Only report",
+  });
+  writeFileSync(
+    join(failed.worktree, "source.txt"),
+    "changed after recovery\n",
+  );
+  expect(() => s.c.run(s.ticket.ticketId)).toThrow(/frozen snapshot/);
+  expect(s.runtime.count).toBe(1);
+});
+it.each([false, true])(
+  "allows explicit restart of pending delivery-only recovery (snapshot changed: %s)",
+  async (change) => {
+    const s = setup();
+    s.runtime.handler = async () => ({
+      finalResponse: "No structured delivery",
+    });
+    s.c.prepare(s.ticket);
+    s.c.run(s.ticket.ticketId);
+    const failed = await s.c.wait(s.ticket.ticketId);
+    const binding = {
+      ticketId: s.ticket.ticketId,
+      revision: 1,
+      attemptId: failed.attempts[0]!.id,
+      snapshotDigest: failed.currentSnapshot,
+      instruction: "Only report",
+    };
+    await s.c.recover({ ...binding, kind: "delivery" });
+    if (change)
+      writeFileSync(join(failed.worktree, "source.txt"), "external update\n");
+    const restart = {
+      ...binding,
+      kind: "restart",
+      snapshotDigest: s.c.status(s.ticket.ticketId).currentSnapshot,
+      instruction: "Continue implementation from this explicit snapshot",
+    };
+    await expect(
+      s.c.recover({ ...restart, attemptId: "wrong" }),
+    ).rejects.toThrow(/match/);
+    if (change)
+      await expect(
+        s.c.recover({ ...restart, snapshotDigest: binding.snapshotDigest }),
+      ).rejects.toThrow(/stale/);
+    const ready = await s.c.recover(restart);
+    expect(ready.state).toBe("ready");
+    expect(ready.pendingDelivery).toBeUndefined();
+    expect(ready.attempts).toHaveLength(1);
+    expect(s.runtime.count).toBe(1);
+    await s.c.action({
+      action: "instruct",
+      ticketId: s.ticket.ticketId,
+      revision: 1,
+      instructionId: "after-restart",
+      instruction: "Preserve existing work",
+    });
+    s.runtime.handler = async (request) => {
+      expect(request.prompt).not.toContain("DELIVERY-ONLY RECOVERY");
+      return {};
+    };
+    s.c.run(s.ticket.ticketId);
+    expect((await s.c.wait(s.ticket.ticketId)).state).toBe("awaiting_review");
+  },
+);
 it("includes staged index-only content and unusual filenames in snapshot identity", () => {
   const s = setup();
   s.ticket.scope.paths = ["."];

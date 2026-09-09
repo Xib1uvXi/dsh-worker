@@ -7,6 +7,8 @@ import { homedir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { checkRuntimeDependencies } from "../../runtime/src/preflight.js";
 import { runtimeVersion } from "../../runtime/src/version.js";
+import { buildInfo } from "../../shared/src/build.js";
+import { ZodError } from "zod";
 import { diagnose, errors, health, summary, errorInfo } from "./diagnostics.js";
 import { DeepSeekHarness } from "@deepseek-ai/dsh-sdk-client";
 import { WorkerClient } from "./client.js";
@@ -19,6 +21,11 @@ import {
   id,
   instructionInputSchema,
   evidenceQuerySchema,
+  boundDelivery,
+  deliverySchema,
+  reviewSchema,
+  ticketSchema,
+  briefIdsSchema,
 } from "../../contracts/src/index.js";
 import { policyPatch, workflow } from "../../runtime/src/policy.js";
 import {
@@ -43,6 +50,7 @@ async function main() {
       port: { type: "string" },
       capacity: { type: "string" },
       file: { type: "string" },
+      "ticket-file": { type: "string" },
       timeout: { type: "string" },
       revision: { type: "string" },
       "instruction-id": { type: "string" },
@@ -70,8 +78,76 @@ async function main() {
   );
   if (command === "help" || values.help) {
     console.log(
-      `dsh-worker 0.2 — CLI + Skill control service\n\nserve [--port 4317] [--capacity 2] [--enable-dispatch]\nlist [--summary] | status ID [--summary] | prepare --file ticket.json\nrun ID [--wait [--brief]] | cancel ID | verify ID [--wait [--brief]]\nwait ID [--timeout SECONDS] [--brief]\nreview --file review.json | recover ID | recover --file continuation.json\ninstruct ID --file instruction.json\ninstruct ID --instruction-file message.txt --revision N --instruction-id KEY\narchive ID | restore ID\nartifact SHA256 --output FILE\nhealth | diagnose ID | errors ID [--attempt ATTEMPT_ID] [--full]\nbrief ID\ntrajectory ID [--after N] [--limit 100] [--attempt ID] [--kind EVENT] [--full]\nactivity ID [--attempt ID] | events ID [--after N] [--limit 100]\nsessions | doctor [--repo PATH] | skill | workflow\ntools [--repo PATH] | tools install\nprune [--days 7] (old clean Harness homes only; evidence retained)\n\nAll commands accept --home DIR; data commands print JSON (--json is optional).\n--file - reads JSON from stdin. Instruction files contain UTF-8 text.\nReuse the same instruction ID for retries; uncertain delivery is never replayed.\n--wait/ wait defaults to a 3600-second timeout; timing out does not cancel work.\nStart the service once, then use the bundled skill/SKILL.md for orchestration.\nModel dispatch is off until explicitly enabled on serve.`,
+      `dsh-worker 0.2 — CLI + Skill control service\n\nserve [--port 4317] [--capacity 2] [--enable-dispatch]\nlist [--summary] | status ID [--summary] | prepare --file ticket.json\nrun ID [--wait [--brief]] | cancel ID | verify ID [--wait [--brief]]\nwait ID [--timeout SECONDS] [--brief]\nreview --file review.json | recover ID | recover --file continuation.json\ninstruct ID --file instruction.json\ninstruct ID --instruction-file message.txt --revision N --instruction-id KEY\narchive ID | restore ID\nartifact SHA256 --output FILE\nhealth | diagnose ID | errors ID [--attempt ATTEMPT_ID] [--full]\nbrief ID [ID ...] (up to 8)\nversion | validate delivery|review --file FILE [--ticket-file FILE --attempt ID]\ntrajectory ID [--after N] [--limit 100] [--attempt ID] [--kind EVENT] [--full]\nactivity ID [--attempt ID] | events ID [--after N] [--limit 100]\nsessions | doctor [--repo PATH] | skill | workflow\ntools [--repo PATH] | tools install\nprune [--days 7] (old clean Harness homes only; evidence retained)\n\nAll commands accept --home DIR; data commands print JSON (--json is optional).\n--file - reads JSON from stdin. Instruction files contain UTF-8 text.\nReuse the same instruction ID for retries; uncertain delivery is never replayed.\n--wait/ wait defaults to a 3600-second timeout; timing out does not cancel work.\nStart the service once, then use the bundled skill/SKILL.md for orchestration.\nModel dispatch is off until explicitly enabled on serve.`,
     );
+    return;
+  }
+  if (command === "version") {
+    ensure(positionals.length === 1, "arguments", "version takes no arguments");
+    console.log(JSON.stringify(buildInfo, null, 2));
+    return;
+  }
+  if (command === "validate") {
+    const kind = positionals[1];
+    ensure(
+      positionals.length === 2 && ["delivery", "review"].includes(kind ?? ""),
+      "arguments",
+      "Use validate delivery|review --file FILE",
+    );
+    ensure(values.file, "file_required", "--file is required");
+    ensure(
+      (!values["ticket-file"] && !values.attempt) ||
+        (kind === "delivery" && values["ticket-file"] && values.attempt),
+      "arguments",
+      "Delivery binding checks require both --ticket-file and --attempt",
+    );
+    const input = JSON.parse(
+      readFileSync(values.file === "-" ? 0 : resolve(values.file), "utf8"),
+    );
+    try {
+      if (kind === "review") reviewSchema.parse(input);
+      else if (values["ticket-file"])
+        boundDelivery(
+          input,
+          ticketSchema.parse(
+            JSON.parse(readFileSync(resolve(values["ticket-file"]), "utf8")),
+          ),
+          id.parse(values.attempt),
+        );
+      else deliverySchema.parse(input);
+      console.log(
+        JSON.stringify(
+          {
+            ok: true,
+            kind,
+            bindingChecked: !!values["ticket-file"],
+            notes: [
+              "Local validation only; no execution, verification, review decision or acceptance was recorded.",
+            ],
+          },
+          null,
+          2,
+        ),
+      );
+    } catch (error) {
+      if (!(error instanceof ZodError)) throw error;
+      console.log(
+        JSON.stringify(
+          {
+            ok: false,
+            kind,
+            issues: error.issues.map(({ path, code, message }) => ({
+              path,
+              code,
+              message,
+            })),
+          },
+          null,
+          2,
+        ),
+      );
+      process.exitCode = 1;
+    }
     return;
   }
   ensure(
@@ -295,7 +371,8 @@ async function main() {
       ? id.parse(positionals[1])
       : undefined;
   ensure(
-    positionals.length <= (ticketId || command === "artifact" ? 2 : 1),
+    command === "brief" ||
+      positionals.length <= (ticketId || command === "artifact" ? 2 : 1),
     "arguments",
     "Unexpected positional arguments",
   );
@@ -348,8 +425,16 @@ async function main() {
   } else if (command === "status") {
     const status = await client.status(ticketId!, !!values.summary);
     result = values.summary ? summary(status) : status;
-  } else if (command === "brief") result = await client.brief(ticketId!);
-  else if (command === "events") result = await client.events(ticketId!, query);
+  } else if (command === "brief") {
+    const ids = briefIdsSchema.parse(positionals.slice(1));
+    if (ids.length === 1) result = await client.brief(ids[0]!);
+    else {
+      const batch = await client.briefs(ids);
+      result = batch;
+      if (batch.errors.length) process.exitCode = 1;
+    }
+  } else if (command === "events")
+    result = await client.events(ticketId!, query);
   else if (command === "trajectory" || command === "activity") {
     const page = await client.trajectory(
       ticketId!,

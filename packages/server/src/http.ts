@@ -11,7 +11,11 @@ import type { Controller } from "../../core/src/controller.js";
 import { WorkerError, ensure, hash } from "../../shared/src/util.js";
 import { sessions } from "./observer.js";
 import { trajectory } from "./trajectory.js";
-import { evidenceQuerySchema } from "../../contracts/src/index.js";
+import {
+  evidenceQuerySchema,
+  briefIdsSchema,
+  type BatchBrief,
+} from "../../contracts/src/index.js";
 import { evidenceBrief } from "../../core/src/evidence.js";
 
 function json(res: ServerResponse, value: unknown, status = 200) {
@@ -99,6 +103,36 @@ export async function startHttp(
         }
         if (req.method === "GET" && url.pathname === "/api/overview")
           return json(res, await controller.pollOverview());
+        if (req.method === "GET" && url.pathname === "/api/briefs") {
+          ensure(
+            [...url.searchParams.keys()].every((key) => key === "ticket"),
+            "arguments",
+            "Only ticket ids are supported for batch briefs",
+          );
+          const ids = briefIdsSchema.parse(url.searchParams.getAll("ticket"));
+          const results = await Promise.allSettled(
+            ids.map(async (id) =>
+              evidenceBrief(await controller.pollStatus(id)),
+            ),
+          );
+          const batch: BatchBrief = { briefs: [], errors: [] };
+          results.forEach((result, index) => {
+            if (result.status === "fulfilled") batch.briefs.push(result.value);
+            else
+              batch.errors.push({
+                ticketId: ids[index]!,
+                code:
+                  result.reason instanceof WorkerError
+                    ? result.reason.code
+                    : "internal",
+                message:
+                  result.reason instanceof Error
+                    ? result.reason.message
+                    : "Cannot read task evidence",
+              });
+          });
+          return json(res, batch);
+        }
         if (req.method === "GET" && url.pathname === "/api/sessions")
           return json(res, await sessions(options.harnessHomes ?? []));
         if (req.method === "GET" && url.pathname === "/api/events") {

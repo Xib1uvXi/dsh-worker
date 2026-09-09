@@ -5,6 +5,56 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { Controller } from "../packages/core/src/controller.js";
 import { startHttp } from "../packages/server/src/http.js";
 import { fixture, FakeRuntime } from "./helpers.js";
+it("lets the user explicitly restart a pending delivery-only recovery from the Web", async () => {
+  const f = fixture();
+  const runtime = new FakeRuntime();
+  runtime.handler = async () => ({ finalResponse: "Missing delivery" });
+  const c = new Controller({ home: f.home, runtime, dispatchEnabled: true });
+  c.prepare(f.ticket);
+  c.run(f.ticket.ticketId);
+  const failed = await c.wait(f.ticket.ticketId);
+  await c.recover({
+    kind: "delivery",
+    ticketId: f.ticket.ticketId,
+    revision: 1,
+    attemptId: failed.attempts[0]!.id,
+    snapshotDigest: failed.currentSnapshot,
+    instruction: "Only report existing evidence",
+  });
+  writeFileSync(join(failed.worktree, "source.txt"), "external change\n");
+  const http = await startHttp(c, {
+    port: 0,
+    token: "b".repeat(64),
+    webDir: resolve("dist/web"),
+  });
+  const browser = await chromium.launch({ headless: true });
+  try {
+    const page = await browser.newPage();
+    page.setDefaultTimeout(5000);
+    await page.goto(http.url + "/#token=" + "b".repeat(64));
+    await page.locator(".task").click();
+    const kind = page.getByLabel("续作方式", { exact: true });
+    expect(await kind.locator("option").allTextContents()).toEqual([
+      "新会话继续",
+    ]);
+    await page
+      .getByLabel("续作要求", { exact: true })
+      .fill("Continue from the inspected external change");
+    await page
+      .getByRole("button", { name: "检查恢复条件", exact: true })
+      .click();
+    await page.getByRole("button", { name: "登记续作", exact: true }).click();
+    await expect
+      .poll(() => c.status(f.ticket.ticketId).pendingDelivery)
+      .toBeUndefined();
+    expect(c.status(f.ticket.ticketId).state).toBe("ready");
+    expect(runtime.count).toBe(1);
+  } finally {
+    await browser.close();
+    await http.close();
+    await c.close();
+  }
+}, 15000);
 it("preserves the next instruction draft while the previous receipt is pending", async () => {
   const f = fixture();
   const c = new Controller({ home: f.home, runtime: new FakeRuntime() });

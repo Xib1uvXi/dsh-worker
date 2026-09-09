@@ -4,6 +4,10 @@ import type {
   EvidenceBrief,
   TicketView,
 } from "../../contracts/src/index.js";
+import {
+  instructionBriefs,
+  executionBrief,
+} from "../../contracts/src/feedback.js";
 
 const commandBrief = (command: CommandResult) => {
   const { output, outputTruncated, ...rest } = command;
@@ -50,6 +54,8 @@ export function evidenceBrief(r: TicketView): EvidenceBrief {
       : undefined;
   return {
     schemaVersion: 2,
+    instructions: instructionBriefs(r),
+    execution: executionBrief(r),
     ticket: {
       ticketId: t.ticketId,
       revision: t.revision,
@@ -88,6 +94,11 @@ export function evidenceBrief(r: TicketView): EvidenceBrief {
           termination: a.termination,
           cleanExit: a.cleanExit,
           error: a.error,
+          failures: a.failures,
+          deadlineAt: a.deadlineAt,
+          turn: a.turn,
+          controllerBuild: a.controllerBuild,
+          deliveryOnlyFrom: a.deliveryOnlyFrom,
         }
       : null,
     workerReport: a?.delivery ?? null,

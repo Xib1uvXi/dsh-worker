@@ -13,7 +13,7 @@ import type {
 } from "../../contracts/src/index.js";
 import {
   actionSchema,
-  deliverySchema,
+  boundDelivery,
   ticketSchema,
   reviewSchema,
   continuationSchema,
@@ -46,6 +46,12 @@ import { cleanEnv, discover, terminate } from "../../shared/src/process.js";
 import type { RuntimeAdapter } from "../../runtime/src/adapter.js";
 import { policyPatch, workflow, workerRole } from "../../runtime/src/policy.js";
 import { deliveryDocument } from "../../runtime/src/delivery.js";
+import {
+  failureReport,
+  instructionText,
+  observeConsumption,
+} from "./attempt-feedback.js";
+import { buildInfo } from "../../shared/src/build.js";
 
 export interface ControllerOptions {
   home: string;
@@ -196,6 +202,7 @@ export class Controller {
         return fresh ? this.view(r, true) : { ...r, stale: false };
       }),
       capacity: this.capacity,
+      build: buildInfo,
       active: this.operations.size,
       dispatchEnabled: this.dispatchEnabled,
       runtimeVersion: this.options.dshBin
@@ -270,6 +277,11 @@ export class Controller {
     );
     const running = r.state === "running";
     const attempt = r.attempts.at(-1);
+    ensure(
+      !r.pendingDelivery && !(running && attempt?.deliveryOnlyFrom),
+      "delivery_only",
+      "Delivery-only recovery does not accept implementation instructions; use an explicit restart for further changes",
+    );
     if (running)
       ensure(
         attempt?.receipt && this.options.runtime.instruct && !this.closing,
@@ -292,7 +304,7 @@ export class Controller {
         const messageId = await this.options.runtime.instruct!(
           attempt!.id,
           command.instructionId,
-          `Additional execution instruction within the assigned scope (external review and delivery contract still apply):\n${command.instruction}`,
+          instructionText(command.instructionId, command.instruction),
         );
         this.store.update(
           command.ticketId,
@@ -303,6 +315,7 @@ export class Controller {
             )!;
             i.status = "received";
             i.messageId = messageId;
+            i.receivedAt = now();
           },
         );
       } catch (error) {
@@ -464,6 +477,22 @@ export class Controller {
     const before = capture(r, this.artifactDir());
     ensure(!before.violations.length, "scope", before.violations.join("; "));
     const answer = r.pendingAnswer;
+    const deliveryOnly = r.pendingDelivery;
+    if (deliveryOnly) {
+      const prior = this.current(r);
+      ensure(
+        prior.id === deliveryOnly.attemptId &&
+          prior.revision === r.ticket.revision &&
+          before.digest === deliveryOnly.snapshotDigest,
+        "continuation_binding",
+        "Delivery-only recovery no longer matches the frozen snapshot",
+      );
+      ensure(
+        prior.cleanExit && !discover(prior.marker, prior.processes).length,
+        "process_cleanup",
+        "Previous delivery still has a writer",
+      );
+    }
     const previous = answer ? this.current(r) : undefined;
     if (answer) {
       ensure(
@@ -492,6 +521,13 @@ export class Controller {
       ...credentialNames(r.ticket.execution),
     ]);
     const attempt: Attempt = {
+      deliveryOnlyFrom: deliveryOnly
+        ? {
+            attemptId: deliveryOnly.attemptId,
+            snapshotDigest: deliveryOnly.snapshotDigest,
+          }
+        : undefined,
+      controllerBuild: buildInfo,
       id: uid(),
       revision: r.ticket.revision,
       sessionId: previous?.sessionId ?? `session-${uid().replaceAll("-", "")}`,
@@ -549,10 +585,12 @@ export class Controller {
       primaryRepository: r.ticket.targetRepo,
       baseCommit: r.ticket.baseCommit,
     });
-    const prompt = `${workerRole}\n\nExecution workspace (controller-owned):\n${workspace}\nRead, edit and run assignment commands in workingDirectory. Resolve assignment-relative source, test and document paths there. The ticket targetRepo is the primary repository reference, not your execution checkout; preserve it. Read the worktree files before editing them.\n\n${local.context}\n\nAssignment:\n${canonical(r.ticket)}\n\nReview / continuation:\n${instruction}\n\nAdditional execution instructions within assigned scope:\n${queued.map((i) => i.text).join("\n\n")}\n\nCurrent snapshot: ${before.digest}\n\nYour final response must be ONLY a JSON delivery document matching this shape (no fences):\n${JSON.stringify(deliveryExample)}\nUse outcome blocked and blockers for unresolved issues. Do not write the delivery into the checkout.`;
-    const runtimePrompt = answer
+    const prompt = `${workerRole}\n\nExecution workspace (controller-owned):\n${workspace}\nRead, edit and run assignment commands in workingDirectory. Resolve assignment-relative source, test and document paths there. The ticket targetRepo is the primary repository reference, not your execution checkout; preserve it. Read the worktree files before editing them.\n\n${local.context}\n\nAssignment:\n${canonical(r.ticket)}\n\nHistorical review / continuation (its attemptId is NOT the current delivery binding):\n${instruction}\n\nAdditional execution instructions within assigned scope:\n${queued.map((i) => i.text).join("\n\n")}\n\nCurrent snapshot: ${before.digest}\n\nDelivery field types: notRun and blockers are string[] (for example ["Live provider check was not run"]), never object arrays. Use [] when empty. Commands are {command: string, result: string}[]; evidence is {acceptanceId: string, evidence: string}[]. Copy ticketId, revision and attemptId ONLY from the current delivery example below. Preserve true command exit codes; do not infer success from tail/grep/awk pipeline exit status. Use focused regressions while correcting known issues, then run the required full gates once the changes settle; retain output for counting instead of rerunning checks only to summarize them.\n\nYour final response must be ONLY a JSON delivery document matching this shape (no fences):\n${JSON.stringify(deliveryExample)}\nUse outcome blocked and blockers for unresolved issues. Do not write the delivery into the checkout.`;
+    let runtimePrompt = answer
       ? `Answer to the previous blocker:\n${answer.instruction}\n\n${prompt}`
       : prompt;
+    if (deliveryOnly)
+      runtimePrompt = `DELIVERY-ONLY RECOVERY of attempt ${deliveryOnly.attemptId}, frozen snapshot ${deliveryOnly.snapshotDigest}. Do not edit source or repeat implementation/tests. Report only existing evidence, explicitly attributing reused commands to that earlier attempt; do not claim new execution. Missing evidence stays in notRun/blockers. Source changes invalidate this repair. The current delivery binding is in the example at the end, not in this historical reference.\n\n${runtimePrompt}`;
     immutable(
       join(dir, "input.json"),
       canonical({
@@ -572,6 +610,7 @@ export class Controller {
       );
       record.attempts.push(attempt);
       delete record.pendingAnswer;
+      delete record.pendingDelivery;
       for (const i of record.instructions ?? [])
         if (queued.some((q) => q.id === i.id)) {
           i.status = "sending";
@@ -592,6 +631,27 @@ export class Controller {
             "stale_snapshot",
             "Setup changed the answered snapshot",
           );
+        if (deliveryOnly)
+          ensure(
+            capture(this.store.get(id)).digest === deliveryOnly.snapshotDigest,
+            "stale_snapshot",
+            "Setup changed the delivery-only snapshot",
+          );
+        attempt.deadlineAt = new Date(
+          Date.now() + r.ticket.execution.timeoutSeconds * 1000,
+        ).toISOString();
+        runtimePrompt = `Execution deadline: ${attempt.deadlineAt}. Finish work and return a delivery before this deadline; preserve an incomplete result as blocked with precise remaining work. Additional instructions do not extend the deadline.\n\n${runtimePrompt}`;
+        immutable(
+          join(dir, "execution.json"),
+          canonical({
+            deadlineAt: attempt.deadlineAt,
+            promptHash: hash(runtimePrompt),
+            controllerBuild: buildInfo,
+          }),
+        );
+        this.store.update(id, "execution.started", (record) => {
+          this.current(record).deadlineAt = attempt.deadlineAt;
+        });
         runtimeEntered = true;
         const result = secrets.value(
           await this.options.runtime.execute(
@@ -604,6 +664,7 @@ export class Controller {
               controllerHome: this.home,
               patches,
               prompt: runtimePrompt,
+              deadlineAt: attempt.deadlineAt,
               resumeFromHome: previous
                 ? join(this.home, "runs", previous.id, "harness-home")
                 : undefined,
@@ -627,34 +688,97 @@ export class Controller {
                 });
               if (message.type === "notification")
                 this.store.transaction(() => {
-                  this.store.event(id, "harness.notification", {
-                    ...secrets.value(message.notification),
-                    attemptId: attempt.id,
-                  });
-                  const { method, params } = message.notification;
+                  const notification = secrets.value(message.notification);
+                  const eventSeq = this.store.event(
+                    id,
+                    "harness.notification",
+                    {
+                      ...notification,
+                      attemptId: attempt.id,
+                    },
+                  );
+                  const { method, params } = notification;
                   if (
                     method === "session.event" &&
                     params.sessionId === attempt.sessionId
                   ) {
                     const event = params.event as {
                       type?: string;
-                      data?: { reason?: { kind?: string } };
+                      data?: {
+                        turn?: number;
+                        id?: string;
+                        content?: { type?: string; text?: string }[];
+                        reason?: {
+                          kind?: string;
+                          error?: { code?: string; message?: string };
+                        };
+                      };
                     };
                     if (
-                      event.type === "agent/inbox/spliced" ||
-                      event.type === "turn/end"
+                      [
+                        "agent/inbox/spliced",
+                        "turn/start",
+                        "turn/end",
+                        "user/message",
+                      ].includes(event.type ?? "")
                     ) {
-                      const record = this.store.get(id);
+                      const record = this.store.get(id, false);
                       const current = this.current(record);
-                      if (event.type === "agent/inbox/spliced")
+                      const observedAt = now();
+                      let changed = false;
+                      if (event.type === "agent/inbox/spliced") {
                         current.receipt = true;
-                      if (event.type === "agent/inbox/spliced")
                         for (const i of record.instructions ?? [])
-                          if (queued.some((q) => q.id === i.id))
+                          if (queued.some((q) => q.id === i.id)) {
                             i.status = "received";
-                      if (event.type === "turn/end")
+                            i.receivedAt ??= observedAt;
+                          }
+                        changed = true;
+                      }
+                      if (
+                        event.type === "turn/start" &&
+                        Number.isInteger(event.data?.turn)
+                      ) {
+                        current.turn = event.data!.turn;
+                        delete current.failures;
+                        changed = true;
+                      }
+                      if (event.type === "turn/end") {
                         current.finishReason = event.data?.reason?.kind;
-                      this.store.save(record, "attempt.observed");
+                        const cause = event.data?.reason?.error;
+                        if (
+                          current.finishReason === "error" &&
+                          typeof cause?.message === "string"
+                        )
+                          current.failures = {
+                            primary: "provider",
+                            provider: {
+                              message: cause.message,
+                              ...(typeof cause.code === "string"
+                                ? { code: cause.code }
+                                : {}),
+                            },
+                          };
+                        changed = true;
+                      }
+                      const consumed =
+                        event.type === "user/message" &&
+                        observeConsumption(
+                          record.instructions ?? [],
+                          current,
+                          event.data ?? {},
+                          observedAt,
+                          eventSeq,
+                          runtimePrompt,
+                          new Set(queued.map((i) => i.id)),
+                        );
+                      if (consumed || changed)
+                        this.store.save(
+                          record,
+                          consumed
+                            ? "instruction.consumed"
+                            : "attempt.observed",
+                        );
                     }
                   }
                 });
@@ -682,7 +806,7 @@ export class Controller {
           const a = this.current(record);
           a.endedAt = now();
           a.receipt = result.receipt;
-          a.finishReason = result.finishReason;
+          a.finishReason = result.finishReason ?? a.finishReason;
           a.termination = result.termination;
           a.cleanExit = result.cleanExit;
           a.error = result.error;
@@ -692,31 +816,45 @@ export class Controller {
             }
           if (result.cleanExit) delete record.activeOperation;
           a.snapshot = snapshot;
-          if (snapshotError)
-            a.error = `${a.error ?? ""} Snapshot: ${String(snapshotError)}`;
-          try {
-            a.delivery = secrets.value(
-              deliverySchema.parse(
-                deliveryDocument(result.finalResponse ?? ""),
-              ),
-            );
-            ensure(
-              a.delivery.ticketId === id &&
-                a.delivery.revision === record.ticket.revision &&
-                a.delivery.attemptId === a.id,
-              "delivery_binding",
-              "Delivery belongs to another attempt",
-            );
-            const ids = new Set(a.delivery.evidence.map((e) => e.acceptanceId));
-            ensure(
-              record.ticket.acceptance.every((ac) => ids.has(ac.id)),
-              "delivery_evidence",
-              "Missing acceptance evidence",
-            );
-          } catch (error) {
-            delete a.delivery;
-            a.error = `${a.error ?? ""} Delivery: ${String(error)}`;
+          let deliveryError: string | undefined;
+          // Missing final text is expected after cancellation/provider failure.
+          // Validate delivery only after a normally completed model turn.
+          if (
+            result.termination === "completed" &&
+            result.finishReason === "completed"
+          ) {
+            try {
+              a.delivery = secrets.value(
+                boundDelivery(
+                  deliveryDocument(result.finalResponse ?? ""),
+                  record.ticket,
+                  a.id,
+                ),
+              );
+            } catch (error) {
+              delete a.delivery;
+              deliveryError = `Delivery: ${String(error)}`;
+            }
           }
+          const frozenViolation =
+            deliveryOnly && snapshot?.digest !== deliveryOnly.snapshotDigest
+              ? "Delivery-only recovery changed the frozen source snapshot; use an explicit restart for implementation"
+              : undefined;
+          const report = failureReport(
+            {
+              ...result,
+              providerError: result.providerError ?? a.failures?.provider,
+            },
+            snapshotError
+              ? String(snapshotError)
+              : (frozenViolation ??
+                  (snapshot?.violations.length
+                    ? snapshot.violations.join("; ")
+                    : undefined)),
+            deliveryError,
+          );
+          a.failures = report.failures;
+          a.error = report.error;
           const complete =
             result.termination === "completed" &&
             result.finishReason === "completed" &&
@@ -724,7 +862,8 @@ export class Controller {
             result.cleanExit &&
             a.snapshot &&
             !a.snapshot.violations.length &&
-            a.delivery;
+            a.delivery &&
+            !a.failures;
           record.state = complete
             ? a.delivery!.outcome === "blocked" || a.delivery!.blockers.length
               ? "blocked"
@@ -732,7 +871,7 @@ export class Controller {
             : "interrupted";
           if (a.snapshot?.violations.length) {
             record.state = "blocked";
-            a.error = a.snapshot.violations.join("; ");
+            a.error ??= a.snapshot.violations.join("; ");
           }
           record.error = a.error;
         });
@@ -1193,9 +1332,10 @@ export class Controller {
       "Cannot recover a live operation",
     );
     ensure(
-      ["blocked", "interrupted"].includes(r.state),
+      ["blocked", "interrupted"].includes(r.state) ||
+        (c.kind === "restart" && r.state === "ready" && !!r.pendingDelivery),
       "state",
-      "Recovery requires blocked or interrupted",
+      "Recovery requires blocked or interrupted, or an explicit restart of pending delivery-only recovery",
     );
     const a = this.current(r);
     ensure(
@@ -1240,6 +1380,36 @@ export class Controller {
         "Previous session history is unavailable; use a fresh continuation",
       );
     }
+    if (c.kind === "delivery") {
+      ensure(
+        r.state === "interrupted" &&
+          a.revision === r.ticket.revision &&
+          a.receipt &&
+          a.cleanExit &&
+          !a.delivery &&
+          a.snapshot?.digest === c.snapshotDigest &&
+          !a.snapshot.violations.length,
+        "delivery_only_state",
+        "Delivery-only recovery requires an unchanged, cleanly ended attempt with a missing or invalid delivery",
+      );
+      ensure(
+        !(r.instructions ?? []).some(
+          (i) =>
+            i.revision === c.revision &&
+            (["queued", "sending", "uncertain"].includes(i.status) ||
+              (i.attemptId === a.id &&
+                i.status === "received" &&
+                !i.consumption)),
+        ),
+        "delivery_only_instructions",
+        "Resolve unconsumed or uncertain instructions before delivery-only recovery",
+      );
+      ensure(
+        !discover(a.marker, a.processes).length,
+        "process_cleanup",
+        "Previous execution still has a writer",
+      );
+    }
     const recoveryId = "recovery:" + uid();
     this.store.update(c.ticketId, "recovery.started", (record) => {
       record.activeOperation = recoveryId;
@@ -1278,6 +1448,8 @@ export class Controller {
           record.continuations.push(c);
           if (c.kind === "answer") record.pendingAnswer = c;
           else delete record.pendingAnswer;
+          if (c.kind === "delivery") record.pendingDelivery = c;
+          else delete record.pendingDelivery;
           const delivered = record.attempts.at(-1);
           const resumeVerification =
             record.interruptedOperation === "verification" &&

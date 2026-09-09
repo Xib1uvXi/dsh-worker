@@ -1,4 +1,9 @@
-import { actionSchema, ticketSchema } from "../../contracts/src/index.js";
+import {
+  actionSchema,
+  ticketSchema,
+  executionBrief,
+  instructionBriefs,
+} from "../../contracts/src/index.js";
 import { mountTrajectory, agentCard } from "./trajectory.js";
 import type {
   Action,
@@ -107,15 +112,40 @@ function version(t: TicketView) {
     t.stale,
     t.currentSnapshot,
     t.error,
-    t.instructions?.map((i) => [i.id, i.status]),
+    t.instructions?.map((i) => [i.id, i.status, i.consumption]),
     t.attempts.at(-1)?.receipt,
+    t.attempts.at(-1)?.deadlineAt,
   ]);
 }
 let activityBusy = false;
+function updateFeedback(node: HTMLElement, ticket: TicketView) {
+  const execution = executionBrief(ticket);
+  const pending = instructionBriefs(ticket).filter(
+    (i) => !i.consumption && i.attemptId === ticket.attempts.at(-1)?.id,
+  );
+  node.textContent = [
+    execution.deadlineAt
+      ? `执行截止：${execution.deadlineAt}${execution.remainingSeconds !== null ? `（剩余 ${execution.remainingSeconds} 秒）` : ""}`
+      : "",
+    pending.length
+      ? `${pending.length} 条指令尚无消费证据，最长等待 ${Math.max(...pending.map((i) => i.unconsumedSeconds ?? 0))} 秒`
+      : "",
+  ]
+    .filter(Boolean)
+    .join(" · ");
+}
 async function refreshActivity() {
   if (activityBusy || !overview) return;
   activityBusy = true;
   try {
+    for (const node of document.querySelectorAll<HTMLElement>(
+      "[data-execution-feedback]",
+    )) {
+      const ticket = overview.tickets.find(
+        (t) => t.ticket.ticketId === node.dataset.executionFeedback,
+      );
+      if (ticket) updateFeedback(node, ticket);
+    }
     const active = overview.tickets.filter((t) => t.activeOperation);
     const pages = await Promise.all(
       active.map((t) =>
@@ -225,7 +255,7 @@ async function loadOverview() {
         }
     }
     connection(
-      `${data.active} / ${data.capacity} 个执行槽位 · ${data.dispatchEnabled ? "可接收调度" : "指派尚未启用"} · 已更新 ${new Date().toLocaleTimeString()}`,
+      `${data.active} / ${data.capacity} 个执行槽位 · ${data.dispatchEnabled ? "可接收调度" : "指派尚未启用"} · 服务 ${data.build?.version ?? "未知构建"} ${data.build?.sourceDigest?.slice(0, 12) ?? ""} · 已更新 ${new Date().toLocaleTimeString()}`,
     );
   } catch (error) {
     if (n === generation)
@@ -544,10 +574,14 @@ function renderDetail(t: TicketView) {
   for (const i of t.instructions ?? [])
     composer.append(
       disclosure(
-        `${instructionStates[i.status]} · 版本 ${i.revision}`,
-        `${i.text}\n${i.messageId ?? ""}\n${i.error ?? ""}`,
+        `${i.consumption ? `已进入执行轮次 ${i.consumption.turn ?? ""}` : instructionStates[i.status]} · 版本 ${i.revision}${i.status === "uncertain" && i.consumption ? " · 回执仍不确定" : ""}`,
+        `${i.text}\n${i.messageId ?? ""}\n${i.consumption ? `消费时间：${i.consumption.time}；不代表已完成。` : "接收回执不代表指令已进入执行轮次。"}\n${i.error ?? ""}`,
       ),
     );
+  const feedback = el("p", undefined, "subtle");
+  feedback.dataset.executionFeedback = t.ticket.ticketId;
+  composer.append(feedback);
+  updateFeedback(feedback, t);
   body.append(composer);
   const trajectoryHost = el("section", undefined, "trajectory-panel");
   body.append(trajectoryHost);
@@ -653,7 +687,11 @@ function renderDetail(t: TicketView) {
     form.append(reviewActions);
     body.append(form);
   }
-  if (["blocked", "interrupted"].includes(t.state) && t.attempts.length) {
+  if (
+    (["blocked", "interrupted"].includes(t.state) ||
+      (t.state === "ready" && t.pendingDelivery)) &&
+    t.attempts.length
+  ) {
     const form = el("div", undefined, "review-form");
     form.append(
       el("h3", "检查并登记续作"),
@@ -672,7 +710,9 @@ function renderDetail(t: TicketView) {
     for (const [value, label] of [
       ["restart", "新会话继续"],
       ["answer", "回答阻塞问题并恢复会话"],
+      ["delivery", "仅补交付报告，保持源码快照"],
     ]) {
+      if (t.state === "ready" && value !== "restart") continue;
       const option = el("option", label);
       option.value = value!;
       kind.append(option);
@@ -710,10 +750,14 @@ function renderDetail(t: TicketView) {
     section.append(
       el(
         "summary",
-        `第 ${i + 1} 次执行 · ${a.finishReason ?? a.termination ?? "执行中"}`,
+        `第 ${i + 1} 次执行 · ${a.failures?.primary ?? a.termination ?? a.finishReason ?? "执行中"}`,
       ),
     );
     section.append(el("p", a.delivery?.summary ?? a.error ?? "尚未交付"));
+    if (a.failures)
+      section.append(
+        disclosure("终止原因与各阶段错误", JSON.stringify(a.failures, null, 2)),
+      );
     if (a.delivery)
       section.append(
         disclosure("交付与验收证据", JSON.stringify(a.delivery, null, 2)),
