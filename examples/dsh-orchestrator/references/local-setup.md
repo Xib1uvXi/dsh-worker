@@ -22,6 +22,8 @@ Discover the bundled CLI instructions and examples through `skill` using this in
 - Review method and available independent reviewer: `REPLACE_REVIEW_METHOD_AND_REVIEWER`.
 - Task/dependency/integration record location: `REPLACE_LOCAL_TASK_RECORD_LOCATION`.
 
+Use that existing record for the decisions described in [host coordination](coordination.md): shared behavior, prerequisite readiness, acceptance ownership, correction disposition and integration evidence. No new database or mandatory record format is required.
+
 Use verified absolute references or paths relative to this generated file; retain access to their supporting resources. Keep each rule in its existing authoritative source. Project-specific instructions and checks come from the current target repository, not from a fixed list copied here. Do not load this orchestrator skill into the worker's `workflow.json`.
 
 ## Delivery preferences

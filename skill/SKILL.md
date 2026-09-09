@@ -9,6 +9,8 @@ Connect to an existing local control service with `dsh-worker`. From a source ch
 
 The external orchestrator owns requirements, design, scheduling, independent review, acceptance and integration. The worker implements the assigned scope and supplies test evidence. Preserve existing authorization and constraints. The worker must not self-accept, commit, merge, publish, delegate or elevate permissions.
 
+For dependent dispatch, changed acceptance ownership, queued corrections or integration, use [host coordination decisions](../examples/dsh-orchestrator/references/coordination.md). Establish shared behavior and resource readiness before starting consumers. Do not accept an unchanged ticket while deferring an explicit requirement in review prose. Keep the host's decisions and remaining obligations in its existing task record; API state and test success do not prove those responsibilities were performed.
+
 For first-time setup, follow [Getting started](../docs/getting-started.md). No particular personal skill suite is required.
 
 When the user wants their own host-side orchestration skill, use [Create your own orchestrator skill](../docs/orchestrator-setup.md) and its template. Generate personal connection and method references in the owner's selected skill directory; keep them separate from the worker's implementation catalog.
