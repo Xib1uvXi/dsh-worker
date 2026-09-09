@@ -2,6 +2,8 @@
 
 The external orchestrator owns the overall outcome, design, scheduling, independent review, acceptance and integration. Workers implement and test independently checkable behavior within their assignment. The controller preserves state and evidence. No additional planning model or worker delegation is enabled by this workflow.
 
+Use [Decisions owned by the orchestrator](../examples/dsh-orchestrator/references/coordination.md) when dispatching dependent work, repartitioning scope, handling queued corrections or integrating deliveries. It supplies concrete decisions, a small obligation-record example and behavioral scenarios. Keep those decisions in the existing plan; monitoring output and accepted ticket counts do not establish that the host made them.
+
 ## Prepare a useful assignment
 
 Start with [ticket.json](../examples/ticket.json) and adapt the [context template](../examples/context.md) into its existing `context` string. State why the change is needed, the fixed decisions and invariants, the implementation choices the worker can make, useful source references, known failures, dependencies and environment commands. Keep references tied to the assigned base or immutable artifacts. Avoid repeating the entire conversation or loading unrelated skills.
@@ -13,6 +15,8 @@ For a new service, establish one executable vertical path and its disposable tes
 External protocol assignments should include a dated method/path/parameter/response matrix and independent examples. Label unknown behavior and ambiguous older evidence. Tests that copy the implementation's unverified assumption cannot validate the provider contract. Keep referenced context stable during a run; a ticket revision or prompt hash does not freeze the contents of a referenced mutable file.
 
 Use `setup` for repeatable dependencies and readiness. Check the actual command environment, including a real database query, Docker build/Compose capability and owned failure cleanup. Worktrees do not isolate process-global variables, shared databases or Docker resources. Prefer explicit test configuration and per-test resource identities over mutable process-global endpoint variables.
+
+Hold consumers of an unfinished shared fixture or interface until its required reviewed changes and readiness evidence exist in their actual base. Before accepting a component, check every explicit obligation in its current objective and acceptance. Moving a requirement to a successor needs an explicit contract repartition and preserved parent obligation, not an exception hidden in `reviewer` or `notes`. Immutable revisions and base-change rules still apply; do not rewrite historical acceptance.
 
 ## Follow one delivery
 
@@ -34,6 +38,8 @@ An instruction's `received` state means admission to the native inbox. Its optio
 Native prompts may wait for the next turn. Group related observations into one coherent instruction before sending instead of creating a separate full verification cycle per small observation. Preserve stable instruction IDs. Do not replace or replay a previously sent uncertain message. If a demonstrated error makes continued work wasteful, explicitly cancel, inspect ownership and snapshot, and recover with consolidated guidance. A normal observation is not a reason to repeatedly interrupt a productive worker.
 
 During correction, run discriminating focused checks. Once known corrections settle, run the complete batch gates on the final snapshot. Retain original command output and exit codes to extract counts later; do not rerun tests only to count or format results. Shell pipelines using `tail`, `grep` or `awk` must preserve the tested command's failure status. The controller's actual verification remains required.
+
+The host records why it is waiting, continuing independent work or stopping an attempt, and what next evidence will resolve the decision. It reconciles outstanding original findings before treating any gate as final. Additional runtime visibility helps this judgment but does not perform it. During integration, the host resolves the combined behavior before assigning a bounded cross-component repair; naming the ticket "closeout" does not transfer that responsibility.
 
 ## Evidence query contract
 

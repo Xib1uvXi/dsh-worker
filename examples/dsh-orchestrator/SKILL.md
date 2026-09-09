@@ -17,6 +17,8 @@ Read the owner's selected planning methods only when requirements or interfaces 
 
 ## Assign and coordinate
 
+Before dependent dispatch, scope repartition, correction handling or integration, apply [host coordination decisions](references/coordination.md). Reuse the current plan to record the decision and evidence; do not create another workflow or require a separate ledger. The host must resolve shared behavior and resource prerequisites, preserve original acceptance, and make explicit wait/stop/recovery decisions when known corrections are queued.
+
 Translate the authorized behavior into a ticket with a real target repository, existing base commit, scope and exclusions, checkable acceptance, verification commands and execution configuration. Read the repository instructions and preserve inherited changes. Resolve shared interface decisions before assigning their consumers. Keep implementation choices that do not change the contract with the worker.
 
 Prepare and run through the actual dsh-worker CLI. Each attempt uses its assigned worktree for edits and tests; ignored dependencies and uncommitted changes from the primary checkout are not inherited. Workers may investigate and fix in-scope defects autonomously. They must not change requirements, delegate, self-accept, commit, merge, push or publish.
@@ -30,6 +32,8 @@ Track each ticket's revision, attempt, worktree, dependencies and evidence in th
 A completed worker turn or `awaiting_review` is a submission. Inspect the actual changes, scope, delivery binding and process cleanup. Run controller verification for the unchanged delivered snapshot and arrange an external independent reviewer using the selected review method. Record separate Spec and Standards assessments against the actual revision, attempt and snapshot; never fill a review template with invented approvals.
 
 For demonstrated defects, supply evidence, affected acceptance criteria and bounded rework instructions. Recheck affected behavior after fixes, apply the repository's required batch checks, and reuse earlier evidence only while its inputs remain valid. Missing reviewers, failed checks and uncertain evidence remain explicit limitations, not acceptance. Ordinary advisory suggestions do not change the original requirements.
+
+Compare acceptance against the actual ticket objective before recording pass. Do not defer a required behavior in review prose while accepting the unchanged ticket. Repartition through the supported revision/new-ticket flow with an explicit successor and preserved parent obligation; bind new evidence to that actual contract. Reconcile known blocking corrections before the final batch gates.
 
 ## Integrate and finish
 
