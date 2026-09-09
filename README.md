@@ -93,7 +93,9 @@ From a checkout, substitute `node dist/cli.js` for `dsh-worker`. Data commands r
 
 The desktop workspace supports natural-language task entry with explicit repository, scope and acceptance fields; editable task versions; execution and cancellation; verification and external review; recovery; and archive/restore. Additional instructions queue for the next attempt or reach the running Harness session through its native prompt API, with visible receipt states.
 
-Detailed execution trajectories and agent activity are Web-only. Inspect messages, tool calls, parameters, results and turn boundaries by attempt or session. Reported child agents retain parent identity, but worker delegation remains disabled. Task entry does not call an extra planning model, and the UI does not invent hidden reasoning.
+Execution trajectories and agent activity are available in the Web and through the CLI. Inspect messages, tool calls, parameters, results and turn boundaries by attempt or session. Reported child agents retain parent identity, but worker delegation remains disabled. Task entry does not call an extra planning model, and the UI does not invent hidden reasoning.
+
+For compact review evidence, run `brief TASK-01`; use `trajectory TASK-01`, `activity TASK-01` and `events TASK-01` for read-only execution inspection. See [Efficient orchestration](docs/orchestration.md) for assignment context, pagination and the complete review/integration loop.
 
 ## Coding tools
 

@@ -15,7 +15,7 @@ Use the same `--home DIR` as the running service. The examples use an installed 
 | `workflow --home DIR` | Inspect configured Skill names, entry skills and source files. |
 | `doctor --home DIR` | Separately initialize and close the installed Harness SDK/runtime without a model call. |
 
-`health` checks connectivity, not provider billing, API-key validity or model execution. It does not print the service token or environment-variable values. The workflow check uses the calling CLI environment; supply the service's `DSH_WORKER_WORKFLOW` override here too if one was used. `doctor` is the explicit runtime smoke check and creates its isolated test directory. Detailed tool calls, messages and trajectories remain on the Web.
+`health` checks connectivity, not provider billing, API-key validity or model execution. It does not print the service token or environment-variable values. The workflow check uses the calling CLI environment; supply the service's `DSH_WORKER_WORKFLOW` override here too if one was used. `doctor` is the explicit runtime smoke check and creates its isolated test directory. Use `trajectory ID` or the Web for detailed tool calls and messages; `brief ID` provides current-revision review evidence. See [Efficient orchestration](orchestration.md) for query and pagination semantics.
 
 ## Reading results
 
@@ -36,7 +36,7 @@ Historical errors remain after recovery and acceptance. Use `currentState` and `
 - **`outcome: "unknown"`**: A mutation request lost its response or timed out. It might already have taken effect. Inspect `status`, `errors` and the Web before deciding the next action. No automatic retry occurs.
 - **Interrupted/blocked task**: Read `errors`, then `recover ID` to inspect the exact attempt/snapshot/processes. Prepare an explicit continuation only after resolving the cause; recovery does not dispatch.
 - **Failed verification**: Inspect command output. Correct the substantiated defect through external review/rework rather than recording acceptance from the Worker summary.
-- **Uncertain instruction**: Check the Web trajectory and receipt state. Do not resend automatically or manufacture a fresh instruction ID as a retry workaround.
+- **Uncertain instruction**: Check `trajectory ID --attempt ATTEMPT_ID` or the Web and the receipt state. Do not resend automatically or manufacture a fresh instruction ID as a retry workaround.
 - **Accepted but stale**: The checkout changed after acceptance. Do not treat the old accepted snapshot as approval for the new content.
 
 Suggestions returned by `diagnose` are argument arrays to inspect and use deliberately. The command never starts, cancels, recovers, edits state or accepts work on the caller's behalf.

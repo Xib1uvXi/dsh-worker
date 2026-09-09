@@ -1,6 +1,6 @@
 import { afterEach, expect, it } from "vitest";
 import { resolve, join } from "node:path";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { Controller } from "../packages/core/src/controller.js";
 import { SdkRuntime } from "../packages/runtime/src/adapter.js";
 import { marked, cleanEnv } from "../packages/shared/src/process.js";
@@ -20,6 +20,20 @@ function setup() {
   controllers.push(c);
   return { ...f, c };
 }
+it("identifies the actual isolated SDK workspace in the assignment without touching primary edits", async () => {
+  const s = setup();
+  writeFileSync(join(s.repo, "source.txt"), "preserve primary edits\n");
+  s.c.prepare({ ...s.ticket, context: "FIXTURE_EXPECT_WORKSPACE" });
+  s.c.run(s.ticket.ticketId);
+  const result = await s.c.wait(s.ticket.ticketId);
+  expect(result.state, result.error).toBe("awaiting_review");
+  expect(readFileSync(join(result.worktree, "source.txt"), "utf8")).toBe(
+    "implemented\n",
+  );
+  expect(readFileSync(join(s.repo, "source.txt"), "utf8")).toBe(
+    "preserve primary edits\n",
+  );
+}, 20000);
 it.each([undefined, "deepseek-v4-flash"])(
   "runs the public SDK subprocess with the default or explicit model (%s) and persists raw events",
   async (model) => {

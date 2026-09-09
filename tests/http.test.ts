@@ -9,6 +9,10 @@ import { Controller } from "../packages/core/src/controller.js";
 import { startHttp } from "../packages/server/src/http.js";
 import { sessions } from "../packages/server/src/observer.js";
 import { fixture, FakeRuntime } from "./helpers.js";
+import type {
+  EvidenceBrief,
+  JournalPage,
+} from "../packages/contracts/src/index.js";
 const closes: (() => Promise<void>)[] = [];
 afterEach(async () => {
   for (const close of closes.splice(0)) await close();
@@ -78,6 +82,142 @@ it("validates shared action contracts and never mutates on GET", async () => {
   expect(good.status).toBe(200);
   expect(s.c.store.list()).toHaveLength(1);
 });
+it("authenticates evidence queries and rejects invalid query options", async () => {
+  const s = await server();
+  s.c.prepare(s.ticket);
+  for (const route of ["brief", "trajectory", "activity", "events"]) {
+    expect(
+      (await fetch(`${s.http.url}/api/tickets/${s.ticket.ticketId}/${route}`))
+        .status,
+    ).toBe(401);
+    expect(
+      (
+        await fetch(`${s.http.url}/api/tickets/MISSING/${route}`, {
+          headers: s.headers,
+        })
+      ).status,
+    ).toBe(404);
+  }
+  for (const route of [
+    "events?limit=0",
+    "events?after=1.2",
+    "trajectory?limit=101",
+    "trajectory?attempt=foreign",
+    "brief?kind=tool/call",
+    "activity?limit=2",
+    "events?unknown=1",
+  ]) {
+    expect(
+      (
+        await fetch(`${s.http.url}/api/tickets/${s.ticket.ticketId}/${route}`, {
+          headers: s.headers,
+        })
+      ).status,
+    ).toBe(400);
+  }
+});
+
+it("replays control pages and retains the latest failed verification in a read-only brief after restart", async () => {
+  const f = fixture();
+  const failureFlag = join(f.root, "fail-verification");
+  f.ticket.verification = [
+    {
+      args: [
+        process.execPath,
+        "-e",
+        `console.log('START'+'o'.repeat(5000)+'END');if(require('fs').existsSync(${JSON.stringify(failureFlag)}))process.exit(7)`,
+      ],
+      cwd: ".",
+      timeoutSeconds: 10,
+    },
+  ];
+  let c = new Controller({
+    home: f.home,
+    runtime: new FakeRuntime(),
+    dispatchEnabled: true,
+  });
+  const options = {
+    port: 0,
+    token: "evidence-test",
+    webDir: resolve("dist/web"),
+  };
+  let http = await startHttp(c, options);
+  closes.push(async () => {
+    await http.close();
+    await c.close();
+  });
+  const headers = { Authorization: "Bearer evidence-test" };
+  const query = async <T>(route: string) => {
+    const response = await fetch(
+      `${http.url}/api/tickets/${f.ticket.ticketId}/${route}`,
+      { headers },
+    );
+    expect(response.status).toBe(200);
+    return (await response.json()) as T;
+  };
+  c.prepare(f.ticket);
+  c.run(f.ticket.ticketId);
+  await c.wait(f.ticket.ticketId);
+  c.verify(f.ticket.ticketId);
+  await c.wait(f.ticket.ticketId);
+  expect((await query<EvidenceBrief>("brief")).verification!.passed).toBe(true);
+  writeFileSync(failureFlag, "fail");
+  c.verify(f.ticket.ticketId);
+  await c.wait(f.ticket.ticketId);
+  const record = c.store.get(f.ticket.ticketId);
+  const journal = c.store.events(0, 10000);
+  const brief = await query<EvidenceBrief>("brief");
+  expect(brief.verification).toMatchObject({
+    id: record.verifications.at(-1)!.id,
+    passed: false,
+    matchesDeliveredSnapshot: true,
+    matchesCurrentSnapshot: true,
+  });
+  expect(brief.verification!.commands[0]).toMatchObject({
+    exitCode: 7,
+    outputTruncated: true,
+    serviceOutputTruncated: false,
+  });
+  expect(brief.verification!.commands[0]!.outputTail).toHaveLength(4000);
+  expect(brief.verification!.commands[0]!.outputTail).toContain("END");
+  expect(brief.review).toBeNull();
+  expect(c.store.get(f.ticket.ticketId)).toEqual(record);
+  expect(c.store.events(0, 10000)).toEqual(journal);
+  const first = await query<JournalPage>("events?limit=2");
+  expect(first.entries).toHaveLength(2);
+  expect(first.hasMore).toBe(true);
+  await http.close();
+  await c.close();
+  c = new Controller({
+    home: f.home,
+    runtime: new FakeRuntime(),
+    dispatchEnabled: true,
+  });
+  http = await startHttp(c, options);
+  expect((await query<EvidenceBrief>("brief")).verification!.id).toBe(
+    brief.verification!.id,
+  );
+  const replay = await query<JournalPage>("events?limit=2");
+  expect(replay).toEqual(first);
+  const seen = first.entries.map((e) => e.seq);
+  let cursor = first.cursor;
+  for (let n = 0; n < 100; n++) {
+    const page = await query<JournalPage>(`events?limit=2&after=${cursor}`);
+    seen.push(...page.entries.map((e) => e.seq));
+    cursor = page.cursor;
+    if (!page.hasMore) break;
+  }
+  const expected = journal
+    .filter(
+      (e) =>
+        e.ticketId === f.ticket.ticketId &&
+        e.type !== "harness.notification" &&
+        !e.type.endsWith(".processes"),
+    )
+    .map((e) => e.seq);
+  expect(seen).toEqual(expected);
+  expect(c.store.get(f.ticket.ticketId).attempts).toHaveLength(1);
+}, 20000);
 it("replays durable event cursors through the authenticated stream", async () => {
   const s = await server();
   s.c.prepare(s.ticket);

@@ -6,7 +6,12 @@ import { writeFileSync, readFileSync } from "node:fs";
 import { Controller } from "../packages/core/src/controller.js";
 import { startHttp } from "../packages/server/src/http.js";
 import { fixture, FakeRuntime } from "./helpers.js";
-import type { TicketView } from "../packages/contracts/src/index.js";
+import type {
+  TicketView,
+  EvidenceBrief,
+  TrajectoryPage,
+  JournalPage,
+} from "../packages/contracts/src/index.js";
 import { runtimeSchema } from "../packages/contracts/src/index.js";
 import type {
   summary,
@@ -433,7 +438,13 @@ it("CLI wait timeout leaves execution running; cancel and explicit recovery pres
     };
     await s.cli(["prepare", "--file", "-"], s.ticket);
     await s.cli(["run", s.ticket.ticketId]);
-    const timed = await s.cli(["wait", s.ticket.ticketId, "--timeout", "0.01"]);
+    const timed = await s.cli([
+      "wait",
+      s.ticket.ticketId,
+      "--brief",
+      "--timeout",
+      "0.01",
+    ]);
     expect(timed.code).toBe(1);
     expect(timed.stderr).toContain("execution continues");
     expect(s.c.status(s.ticket.ticketId).state).toBe("running");
@@ -460,8 +471,8 @@ it("CLI wait timeout leaves execution running; cancel and explicit recovery pres
     await s.close();
   }
 }, 20000);
-it("rejects retired integration and trace commands without requiring a configured service", async () => {
-  for (const retired of ["mcp", "trajectory", "activity", "events"]) {
+it("rejects the retired protocol command without requiring a configured service", async () => {
+  for (const retired of ["mcp"]) {
     await expect(
       promisify(execFile)(process.execPath, [
         command,
@@ -475,3 +486,361 @@ it("rejects retired integration and trace commands without requiring a configure
     });
   }
 });
+
+it("reads bounded, filtered trajectory and task events without changing durable state", async () => {
+  const s = await setup();
+  try {
+    s.c.prepare(s.ticket);
+    s.c.run(s.ticket.ticketId);
+    const delivered = await s.c.wait(s.ticket.ticketId);
+    const a = delivered.attempts.at(-1)!;
+    const after = s.c.store.events(0, 10000).at(-1)!.seq;
+    const expected: number[] = [];
+    for (let i = 0; i < 13; i++) {
+      s.c.store.event(s.ticket.ticketId, "harness.notification", {
+        attemptId: a.id,
+        notification: {
+          method: "session.event",
+          params: {
+            sessionId: a.sessionId,
+            event: {
+              type: i === 12 ? "assistant/message" : "tool/call",
+              data:
+                i === 12
+                  ? {
+                      message: {
+                        content: [
+                          { type: "reasoning", text: "PRIVATE REASONING" },
+                          { type: "text", text: "z".repeat(5000) },
+                        ],
+                      },
+                    }
+                  : {
+                      callId: `call-${i}`,
+                      name: "read",
+                      arguments: { path: "source.txt" },
+                    },
+            },
+          },
+        },
+      });
+      if (i === 12) expected.push(s.c.store.events(0, 10000).at(-1)!.seq);
+    }
+    s.c.store.event(s.ticket.ticketId, "execution.processes", {
+      private: "process bookkeeping",
+    });
+    s.c.store.event(s.ticket.ticketId, "harness.notification", {
+      attemptId: a.id,
+      notification: {
+        method: "session.event",
+        params: {
+          sessionId: a.sessionId,
+          event: {
+            type: "assistant/attempt",
+            data: {
+              error: "visible provider failure",
+              stream: [
+                {
+                  type: "reasoning-chunks",
+                  time0: 1,
+                  index: 0,
+                  dt: [0],
+                  texts: ["OMITTED-ATTEMPT-STREAM"],
+                },
+              ],
+            },
+          },
+        },
+      },
+    });
+    s.c.store.event(s.ticket.ticketId, "ticket.test-warning", {
+      message: "Evidence only",
+    });
+    s.c.store.event("UNRELATED", "ticket.test-warning", {});
+    const beforeRecord = s.c.store.get(s.ticket.ticketId);
+    const beforeJournal = s.c.store.events(0, 10000);
+    let cursor = after;
+    const found = [];
+    let emptyPages = 0;
+    for (let n = 0; n < 10; n++) {
+      const result = await s.cli<
+        TrajectoryPage & { entries: { textTruncated?: boolean }[] }
+      >([
+        "trajectory",
+        s.ticket.ticketId,
+        "--after",
+        String(cursor),
+        "--limit",
+        "5",
+        "--attempt",
+        a.id,
+        "--kind",
+        "assistant/message",
+      ]);
+      expect(result.code, result.stderr).toBe(0);
+      const page = result.value;
+      if (!page.entries.length && page.hasMore) emptyPages++;
+      found.push(...page.entries);
+      cursor = page.cursor;
+      if (!page.hasMore) break;
+    }
+    expect(emptyPages).toBeGreaterThan(0);
+    expect(found.map((e) => e.seq)).toEqual(expected);
+    expect(found[0]!.text).toHaveLength(4000);
+    expect(found[0]).toMatchObject({ textTruncated: true });
+    expect(found[0]).not.toHaveProperty("raw");
+    const full = await s.cli<TrajectoryPage>([
+      "trajectory",
+      s.ticket.ticketId,
+      "--after",
+      String(after),
+      "--kind",
+      "assistant/message",
+      "--full",
+    ]);
+    expect(full.value.entries[0]!.text).toHaveLength(5000);
+    expect(full.value.entries[0]).toHaveProperty("raw");
+    expect(JSON.stringify(full.value)).not.toContain("PRIVATE REASONING");
+    for (const detail of [[], ["--full"]]) {
+      const attempts = await s.cli<TrajectoryPage>([
+        "trajectory",
+        s.ticket.ticketId,
+        "--after",
+        String(after),
+        "--kind",
+        "assistant/attempt",
+        ...detail,
+      ]);
+      expect(attempts.code, attempts.stderr).toBe(0);
+      expect(attempts.value.entries[0]!.text).toContain(
+        "visible provider failure",
+      );
+      expect(JSON.stringify(attempts.value.entries)).not.toContain(
+        "OMITTED-ATTEMPT-STREAM",
+      );
+    }
+    const projected = await fetch(
+      `${s.http.url}/api/tickets/${s.ticket.ticketId}/trajectory?after=${after}&kind=assistant%2Fattempt`,
+      { headers: { Authorization: "Bearer cli-fixture" } },
+    );
+    expect(await projected.text()).not.toContain("OMITTED-ATTEMPT-STREAM");
+    const activity = await s.cli<TrajectoryPage>([
+      "activity",
+      s.ticket.ticketId,
+      "--attempt",
+      a.id,
+    ]);
+    expect(activity.code, activity.stderr).toBe(0);
+    expect(activity.value.entries).toEqual([]);
+    expect(activity.value.agents[0]).toMatchObject({
+      attemptId: a.id,
+      status: "ended",
+    });
+    const events = await s.cli<JournalPage>([
+      "events",
+      s.ticket.ticketId,
+      "--after",
+      String(after),
+      "--limit",
+      "1",
+    ]);
+    expect(events.value.entries.map((e) => e.type)).toEqual([
+      "ticket.test-warning",
+    ]);
+    expect(events.value.hasMore).toBe(false);
+    expect(s.runtime.count).toBe(1);
+    expect(s.c.store.get(s.ticket.ticketId)).toEqual(beforeRecord);
+    expect(s.c.store.events(0, 10000)).toEqual(beforeJournal);
+  } finally {
+    await s.close();
+  }
+}, 20000);
+
+it("brief separates current evidence from claims, stale files and superseded revisions", async () => {
+  const s = await setup();
+  try {
+    writeFileSync(join(s.repo, "source.txt"), "large baseline\n".repeat(12000));
+    await promisify(execFile)("git", ["-C", s.repo, "add", "source.txt"]);
+    await promisify(execFile)("git", [
+      "-C",
+      s.repo,
+      "commit",
+      "-m",
+      "large fixture baseline",
+    ]);
+    s.ticket.baseCommit = (
+      await promisify(execFile)("git", ["-C", s.repo, "rev-parse", "HEAD"])
+    ).stdout.trim();
+    s.runtime.handler = async (request) => {
+      writeFileSync(
+        join(request.worktree, "new.txt"),
+        "large evidence\n".repeat(12000),
+      );
+      return {};
+    };
+    s.c.prepare(s.ticket);
+    const ready = await s.cli<EvidenceBrief>(["brief", s.ticket.ticketId]);
+    expect(ready.value.attempt).toBeNull();
+    expect(ready.value.binding.currentSnapshot).toBeNull();
+    s.c.run(s.ticket.ticketId);
+    await s.c.wait(s.ticket.ticketId);
+    const submitted = await s.cli<EvidenceBrief>(["brief", s.ticket.ticketId]);
+    expect(submitted.value.workerReport!.outcome).toBe("submitted");
+    expect(submitted.value.verification).toBeNull();
+    expect(submitted.value.review).toBeNull();
+    s.c.verify(s.ticket.ticketId);
+    const verified = await s.c.wait(s.ticket.ticketId);
+    const a = verified.attempts.at(-1)!;
+    s.c.review({
+      schemaVersion: 2,
+      ticketId: s.ticket.ticketId,
+      revision: 1,
+      attemptId: a.id,
+      snapshotDigest: a.snapshot!.digest,
+      spec: { verdict: "pass", findings: [] },
+      standards: { verdict: "pass", findings: [] },
+      verdict: "accept",
+      findings: [],
+      reviewer: "test fixture",
+    });
+    const brief = (await s.cli<EvidenceBrief>(["brief", s.ticket.ticketId]))
+      .value;
+    expect(brief.state).toBe("accepted");
+    expect(brief.binding.matchesDeliveredSnapshot).toBe(true);
+    expect(brief.verification).toMatchObject({
+      passed: true,
+      matchesDeliveredSnapshot: true,
+      matchesCurrentSnapshot: true,
+    });
+    expect(brief.review!.snapshotDigest).toBe(brief.binding.deliveredSnapshot);
+    expect(brief.changes.paths).toEqual(["new.txt", "source.txt"]);
+    const full = (await s.cli(["status", s.ticket.ticketId])).value;
+    const sizes = {
+      fullStatusBytes: Buffer.byteLength(JSON.stringify(full)),
+      briefBytes: Buffer.byteLength(JSON.stringify(brief)),
+    };
+    expect(sizes.briefBytes).toBeLessThan(sizes.fullStatusBytes / 10);
+    console.log("evidence projection payload", sizes);
+    writeFileSync(
+      join(verified.worktree, "source.txt"),
+      "changed after acceptance\n",
+    );
+    // Existing display cache can legitimately lag up to three seconds.
+    let stale: EvidenceBrief | undefined;
+    await expect
+      .poll(
+        async () => {
+          stale = (await s.cli<EvidenceBrief>(["brief", s.ticket.ticketId]))
+            .value;
+          return stale.binding.matchesDeliveredSnapshot;
+        },
+        { timeout: 6000, interval: 300 },
+      )
+      .toBe(false);
+    expect(stale!.binding.deliveredSnapshot).toBe(a.snapshot!.digest);
+    expect(stale!.verification!.matchesCurrentSnapshot).toBe(false);
+    expect(stale!.review!.verdict).toBe("accept"); // Historical decision remains bound to its old bytes.
+    s.c.prepare({
+      ...s.ticket,
+      revision: 2,
+      objective: "Continue with revised requirements",
+    });
+    const revised = (await s.cli<EvidenceBrief>(["brief", s.ticket.ticketId]))
+      .value;
+    expect(revised.ticket.revision).toBe(2);
+    expect(revised.attempt).toBeNull();
+    expect(revised.workerReport).toBeNull();
+    expect(revised.verification).toBeNull();
+    expect(revised.review).toBeNull();
+    expect(revised.binding.deliveredSnapshot).toBeNull();
+  } finally {
+    await s.close();
+  }
+}, 25000);
+
+it("validates evidence options before contacting a service", async () => {
+  for (const args of [
+    ["trajectory", "ONE", "--after=-1"],
+    ["trajectory", "ONE", "--after", "9007199254740992"],
+    ["events", "ONE", "--limit", "101"],
+    ["events", "ONE", "--limit", "NaN"],
+    ["events", "ONE", "--kind", "tool/call"],
+    ["brief", "ONE", "--attempt", "old"],
+    ["activity", "ONE", "--after", "2"],
+    ["run", "ONE", "--brief"],
+    ["status", "ONE", "--brief"],
+    ["workflow", "--brief"],
+    ["skill", "--brief"],
+    ["tools", "install", "--brief"],
+  ]) {
+    const result = await invoke("/no-service", args);
+    expect(result.code).toBe(1);
+    expect(["invalid_contract", "arguments"]).toContain(
+      JSON.parse(result.stderr).code,
+    );
+  }
+  for (const args of [
+    ["tools", "install", "--brief", "--help"],
+    ["tools", "install", "--help"],
+    ["workflow", "--brief", "--help"],
+  ]) {
+    const result = await promisify(execFile)(process.execPath, [
+      command,
+      ...args,
+      "--home",
+      "/no-service",
+    ]);
+    expect(result.stdout).toContain("CLI + Skill control service");
+  }
+});
+
+it("returns a bound brief after run or verify waiting and preserves full wait by default", async () => {
+  const s = await setup();
+  try {
+    const prepared = s.c.prepare(s.ticket);
+    const ready = await s.cli<EvidenceBrief>([
+      "wait",
+      s.ticket.ticketId,
+      "--brief",
+    ]);
+    expect(ready.code, ready.stderr).toBe(0);
+    expect(ready.value.attempt).toBeNull();
+    expect(ready.value.worktree).toBe(prepared.worktree);
+    expect(ready.value.ticket.baseCommit).toBe(s.ticket.baseCommit);
+    expect(ready.value.ticket.targetRepo).toBe(prepared.ticket.targetRepo);
+    const submitted = await s.cli<EvidenceBrief>([
+      "run",
+      s.ticket.ticketId,
+      "--wait",
+      "--brief",
+    ]);
+    expect(submitted.code, submitted.stderr).toBe(0);
+    expect(submitted.value.state).toBe("awaiting_review");
+    expect(submitted.value.workerReport!.outcome).toBe("submitted");
+    expect(submitted.value.verification).toBeNull();
+    expect(submitted.value.review).toBeNull();
+    expect(submitted.value).not.toHaveProperty("attempts");
+    const verified = await s.cli<EvidenceBrief>([
+      "verify",
+      s.ticket.ticketId,
+      "--wait",
+      "--brief",
+    ]);
+    expect(verified.code, verified.stderr).toBe(0);
+    expect(verified.value.verification).toMatchObject({
+      passed: true,
+      matchesDeliveredSnapshot: true,
+      matchesCurrentSnapshot: true,
+    });
+    expect(verified.value.binding.attemptId).toBe(
+      submitted.value.binding.attemptId,
+    );
+    expect(verified.value.state).toBe("awaiting_review");
+    expect(
+      (await s.cli(["wait", s.ticket.ticketId])).value.attempts,
+    ).toHaveLength(1);
+    expect(s.runtime.count).toBe(1);
+  } finally {
+    await s.close();
+  }
+}, 15000);

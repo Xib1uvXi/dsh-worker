@@ -5,7 +5,12 @@ import type {
   Overview,
   TicketView,
   PruneResult,
+  EvidenceQuery,
+  EvidenceBrief,
+  TrajectoryPage,
+  JournalPage,
 } from "../../contracts/src/index.js";
+import { evidenceQuerySchema } from "../../contracts/src/index.js";
 import { ensure, hash } from "../../shared/src/util.js";
 export class ClientError extends Error {
   constructor(
@@ -127,6 +132,30 @@ export class WorkerClient {
     return this.request<TicketView>(
       `/api/tickets/${encodeURIComponent(id)}${summary ? "?summary=1" : ""}`,
     );
+  }
+  brief(id: string) {
+    return this.request<EvidenceBrief>(
+      `/api/tickets/${encodeURIComponent(id)}/brief`,
+    );
+  }
+  trajectory(id: string, query: EvidenceQuery = {}, activityOnly = false) {
+    return this.request<TrajectoryPage>(
+      this.evidencePath(id, activityOnly ? "activity" : "trajectory", query),
+    );
+  }
+  events(id: string, query: Pick<EvidenceQuery, "after" | "limit"> = {}) {
+    return this.request<JournalPage>(this.evidencePath(id, "events", query));
+  }
+  private evidencePath(id: string, route: string, query: EvidenceQuery) {
+    const parsed = evidenceQuerySchema.parse(query);
+    const search = new URLSearchParams();
+    for (const [key, value] of Object.entries(parsed))
+      if (
+        value !== undefined &&
+        !(route === "activity" && ["after", "limit"].includes(key))
+      )
+        search.set(key, String(value));
+    return `/api/tickets/${encodeURIComponent(id)}/${route}?${search}`;
   }
   action(command: Extract<Action, { action: "prune" }>): Promise<PruneResult>;
   action(command: Exclude<Action, { action: "prune" }>): Promise<TicketView>;

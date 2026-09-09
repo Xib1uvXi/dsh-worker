@@ -13,6 +13,10 @@ createInterface({input:process.stdin}).on('line',line=>{
   const sessionId=message.params.sessionId;const input=message.params.contentBlocks.map(x=>x.text??'').join('');const messageId='fixture-message';response({messageId});
   const expectedModel=input.match(/FIXTURE_EXPECT_MODEL=([\w.-]+)/)?.[1];
   if(expectedModel && model!==expectedModel)throw new Error('Unexpected initialized model: '+model);
+  if(input.includes('FIXTURE_EXPECT_WORKSPACE')){
+   const workspace=JSON.parse(input.split('Execution workspace (controller-owned):\n')[1]?.split('\n')[0]??'null');
+   if(workspace?.workingDirectory!==cwd || workspace?.primaryRepository===cwd)throw new Error('Assignment does not identify the actual SDK working directory separately from the primary repository');
+  }
   setTimeout(()=>{
    const event=(type,data)=>notify('session.event',{sessionId,event:{type,data}});
    event('agent/inbox/spliced',{inserted:[{id:messageId}]});

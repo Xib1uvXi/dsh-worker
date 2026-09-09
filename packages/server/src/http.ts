@@ -11,6 +11,8 @@ import type { Controller } from "../../core/src/controller.js";
 import { WorkerError, ensure, hash } from "../../shared/src/util.js";
 import { sessions } from "./observer.js";
 import { trajectory } from "./trajectory.js";
+import { evidenceQuerySchema } from "../../contracts/src/index.js";
+import { evidenceBrief } from "../../core/src/evidence.js";
 
 function json(res: ServerResponse, value: unknown, status = 200) {
   res.writeHead(status, {
@@ -135,22 +137,61 @@ export async function startHttp(
           return;
         }
         const timeline = url.pathname.match(
-          /^\/api\/tickets\/([^/]+)\/(trajectory|activity)$/,
+          /^\/api\/tickets\/([^/]+)\/(trajectory|activity|events|brief)$/,
         );
         if (req.method === "GET" && timeline) {
-          const after = Number(url.searchParams.get("after") ?? 0);
+          const ticketId = decodeURIComponent(timeline[1]!);
+          const allowed =
+            timeline[2] === "brief"
+              ? []
+              : timeline[2] === "activity"
+                ? ["attempt"]
+                : timeline[2] === "events"
+                  ? ["after", "limit"]
+                  : ["after", "limit", "attempt", "kind"];
           ensure(
-            Number.isSafeInteger(after) && after >= 0,
-            "cursor",
-            "Invalid trajectory cursor",
+            [...url.searchParams.keys()].every((key) => allowed.includes(key)),
+            "arguments",
+            "Unsupported evidence query option",
           );
+          const query = evidenceQuerySchema.parse({
+            after: Number(url.searchParams.get("after") ?? 0),
+            limit: Number(url.searchParams.get("limit") ?? 100),
+            attempt: url.searchParams.get("attempt") ?? undefined,
+            kind: url.searchParams.get("kind") ?? undefined,
+          });
+          if (timeline[2] === "brief")
+            return json(
+              res,
+              evidenceBrief(await controller.pollStatus(ticketId)),
+            );
+          if (timeline[2] === "events") {
+            ensure(
+              !query.attempt && !query.kind,
+              "arguments",
+              "Control events support after and limit only",
+            );
+            controller.store.get(ticketId, false);
+            const rows = controller.store.controlEvents(
+              query.after,
+              query.limit + 1,
+              ticketId,
+            );
+            const entries = rows.slice(0, query.limit);
+            return json(res, {
+              entries,
+              cursor: entries.at(-1)?.seq ?? query.after,
+              hasMore: rows.length > query.limit,
+            });
+          }
           return json(
             res,
             trajectory(
               controller.store,
-              decodeURIComponent(timeline[1]!),
-              after,
+              ticketId,
+              query.after,
               timeline[2] === "activity",
+              query,
             ),
           );
         }

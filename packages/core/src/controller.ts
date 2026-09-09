@@ -509,7 +509,12 @@ export class Controller {
       notRun: [],
       blockers: [],
     };
-    const prompt = `${workerRole}\n\n${local.context}\n\nAssignment:\n${canonical(r.ticket)}\n\nReview / continuation:\n${instruction}\n\nAdditional execution instructions within assigned scope:\n${queued.map((i) => i.text).join("\n\n")}\n\nCurrent snapshot: ${before.digest}\n\nYour final response must be ONLY a JSON delivery document matching this shape (no fences):\n${JSON.stringify(deliveryExample)}\nUse outcome blocked and blockers for unresolved issues. Do not write the delivery into the checkout.`;
+    const workspace = canonical({
+      workingDirectory: r.worktree,
+      primaryRepository: r.ticket.targetRepo,
+      baseCommit: r.ticket.baseCommit,
+    });
+    const prompt = `${workerRole}\n\nExecution workspace (controller-owned):\n${workspace}\nRead, edit and run assignment commands in workingDirectory. Resolve assignment-relative source, test and document paths there. The ticket targetRepo is the primary repository reference, not your execution checkout; preserve it. Read the worktree files before editing them.\n\n${local.context}\n\nAssignment:\n${canonical(r.ticket)}\n\nReview / continuation:\n${instruction}\n\nAdditional execution instructions within assigned scope:\n${queued.map((i) => i.text).join("\n\n")}\n\nCurrent snapshot: ${before.digest}\n\nYour final response must be ONLY a JSON delivery document matching this shape (no fences):\n${JSON.stringify(deliveryExample)}\nUse outcome blocked and blockers for unresolved issues. Do not write the delivery into the checkout.`;
     immutable(
       join(dir, "input.json"),
       canonical({

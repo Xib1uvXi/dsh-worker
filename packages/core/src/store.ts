@@ -138,6 +138,24 @@ export class Store {
   trajectoryEvents(after: number, limit: number, ticketId: string) {
     return this.events(after, limit, ticketId, true);
   }
+  controlEvents(
+    after: number,
+    limit: number,
+    ticketId: string,
+  ): JournalEvent[] {
+    const rows = this.db
+      .prepare(
+        "SELECT seq, time, ticket_id AS ticketId, type, data FROM journal WHERE seq>? AND ticket_id=? AND type!='harness.notification' AND type NOT LIKE '%.processes' ORDER BY seq LIMIT ?",
+      )
+      .all(after, ticketId, limit) as {
+      seq: number;
+      time: string;
+      ticketId: string;
+      type: string;
+      data: string;
+    }[];
+    return rows.map((r) => ({ ...r, data: JSON.parse(r.data) }));
+  }
   events(
     after = 0,
     limit = 200,

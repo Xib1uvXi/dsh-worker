@@ -18,6 +18,7 @@ import {
   actionSchema,
   id,
   instructionInputSchema,
+  evidenceQuerySchema,
 } from "../../contracts/src/index.js";
 import { policyPatch, workflow } from "../../runtime/src/policy.js";
 import {
@@ -48,8 +49,12 @@ async function main() {
       "instruction-file": { type: "string" },
       output: { type: "string" },
       attempt: { type: "string" },
+      after: { type: "string" },
+      limit: { type: "string" },
+      kind: { type: "string" },
       summary: { type: "boolean" },
       full: { type: "boolean" },
+      brief: { type: "boolean" },
       "enable-dispatch": { type: "boolean" },
       json: { type: "boolean" },
       wait: { type: "boolean" },
@@ -62,6 +67,19 @@ async function main() {
     values.home ??
       process.env.DSH_WORKER_HOME ??
       join(homedir(), ".dsh-worker-v2"),
+  );
+  if (command === "help" || values.help) {
+    console.log(
+      `dsh-worker 0.2 — CLI + Skill control service\n\nserve [--port 4317] [--capacity 2] [--enable-dispatch]\nlist [--summary] | status ID [--summary] | prepare --file ticket.json\nrun ID [--wait [--brief]] | cancel ID | verify ID [--wait [--brief]]\nwait ID [--timeout SECONDS] [--brief]\nreview --file review.json | recover ID | recover --file continuation.json\ninstruct ID --file instruction.json\ninstruct ID --instruction-file message.txt --revision N --instruction-id KEY\narchive ID | restore ID\nartifact SHA256 --output FILE\nhealth | diagnose ID | errors ID [--attempt ATTEMPT_ID] [--full]\nbrief ID\ntrajectory ID [--after N] [--limit 100] [--attempt ID] [--kind EVENT] [--full]\nactivity ID [--attempt ID] | events ID [--after N] [--limit 100]\nsessions | doctor [--repo PATH] | skill | workflow\ntools [--repo PATH] | tools install\nprune [--days 7] (old clean Harness homes only; evidence retained)\n\nAll commands accept --home DIR; data commands print JSON (--json is optional).\n--file - reads JSON from stdin. Instruction files contain UTF-8 text.\nReuse the same instruction ID for retries; uncertain delivery is never replayed.\n--wait/ wait defaults to a 3600-second timeout; timing out does not cancel work.\nStart the service once, then use the bundled skill/SKILL.md for orchestration.\nModel dispatch is off until explicitly enabled on serve.`,
+    );
+    return;
+  }
+  ensure(
+    !values.brief ||
+      command === "wait" ||
+      (["run", "verify"].includes(command) && values.wait),
+    "arguments",
+    "--brief requires wait, run --wait or verify --wait",
   );
   if (command === "tools") {
     if (positionals[1] === "install")
@@ -82,12 +100,6 @@ async function main() {
       );
       if (!report.ok || !plugins.ok) process.exitCode = 1;
     }
-    return;
-  }
-  if (command === "help" || values.help) {
-    console.log(
-      `dsh-worker 0.2 — CLI + Skill control service\n\nserve [--port 4317] [--capacity 2] [--enable-dispatch]\nlist [--summary] | status ID [--summary] | prepare --file ticket.json\nrun ID [--wait] | cancel ID | verify ID [--wait]\nwait ID [--timeout SECONDS]\nreview --file review.json | recover ID | recover --file continuation.json\ninstruct ID --file instruction.json\ninstruct ID --instruction-file message.txt --revision N --instruction-id KEY\narchive ID | restore ID\nartifact SHA256 --output FILE\nhealth | diagnose ID | errors ID [--attempt ATTEMPT_ID] [--full]\nsessions | doctor [--repo PATH] | skill | workflow\ntools [--repo PATH] | tools install\nprune [--days 7] (old clean Harness homes only; evidence retained)\n\nAll commands accept --home DIR; data commands print JSON (--json is optional).\n--file - reads JSON from stdin. Instruction files contain UTF-8 text.\nReuse the same instruction ID for retries; uncertain delivery is never replayed.\n--wait/ wait defaults to a 3600-second timeout; timing out does not cancel work.\nStart the service once, then use the bundled skill/SKILL.md for orchestration.\nModel dispatch is off until explicitly enabled on serve.`,
-    );
     return;
   }
   if (command === "skill") {
@@ -119,9 +131,25 @@ async function main() {
     "--summary is only supported by list and status",
   );
   ensure(
-    (!values.attempt && !values.full) || command === "errors",
+    !values.attempt || ["errors", "trajectory", "activity"].includes(command),
     "arguments",
-    "--attempt and --full are only supported by errors",
+    "--attempt is only supported by errors, trajectory and activity",
+  );
+  ensure(
+    !values.full || ["errors", "trajectory"].includes(command),
+    "arguments",
+    "--full is only supported by errors and trajectory",
+  );
+  ensure(
+    (values.after === undefined && values.limit === undefined) ||
+      ["trajectory", "events"].includes(command),
+    "arguments",
+    "--after and --limit are only supported by trajectory and events",
+  );
+  ensure(
+    values.kind === undefined || command === "trajectory",
+    "arguments",
+    "--kind is only supported by trajectory",
   );
   if (command === "health") {
     ensure(positionals.length === 1, "arguments", "health takes no task ID");
@@ -238,6 +266,10 @@ async function main() {
       "sessions",
       "wait",
       "artifact",
+      "brief",
+      "trajectory",
+      "activity",
+      "events",
     ].includes(command),
     "command",
     `Unknown command ${command}; use dsh-worker help`,
@@ -254,6 +286,10 @@ async function main() {
       "archive",
       "restore",
       "wait",
+      "brief",
+      "trajectory",
+      "activity",
+      "events",
     ].includes(command) ||
     (command === "recover" && !values.file)
       ? id.parse(positionals[1])
@@ -269,6 +305,14 @@ async function main() {
     "timeout",
     "--timeout must be greater than zero and at most 86400 seconds",
   );
+  const query = evidenceQuerySchema.parse({
+    after: values.after === undefined ? undefined : Number(values.after),
+    limit: values.limit === undefined ? undefined : Number(values.limit),
+    attempt: ["trajectory", "activity"].includes(command)
+      ? values.attempt
+      : undefined,
+    kind: values.kind,
+  });
   const client = new WorkerClient(home);
   const read = () => {
     ensure(values.file, "file_required", "--file is required");
@@ -281,7 +325,7 @@ async function main() {
     while (true) {
       const status = await client.status(ticketId, true);
       if (!status.activeOperation || status.state === "interrupted")
-        return client.status(ticketId);
+        return values.brief ? client.brief(ticketId) : client.status(ticketId);
       ensure(
         Date.now() < deadline,
         "wait_timeout",
@@ -304,6 +348,24 @@ async function main() {
   } else if (command === "status") {
     const status = await client.status(ticketId!, !!values.summary);
     result = values.summary ? summary(status) : status;
+  } else if (command === "brief") result = await client.brief(ticketId!);
+  else if (command === "events") result = await client.events(ticketId!, query);
+  else if (command === "trajectory" || command === "activity") {
+    const page = await client.trajectory(
+      ticketId!,
+      query,
+      command === "activity",
+    );
+    result = values.full
+      ? page
+      : {
+          ...page,
+          entries: page.entries.map(({ raw: _raw, text, ...entry }) => ({
+            ...entry,
+            text: text.slice(0, 4000),
+            textTruncated: text.length > 4000,
+          })),
+        };
   } else if (command === "errors")
     result = errors(
       await client.status(ticketId!, true),

@@ -303,6 +303,91 @@ export interface TrajectoryPage {
   cursor: number;
   hasMore: boolean;
 }
+export const evidenceQuerySchema = z
+  .object({
+    after: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER).default(0),
+    limit: z.number().int().min(1).max(100).default(100),
+    attempt: id.optional(),
+    kind: z.string().trim().min(1).max(200).optional(),
+  })
+  .strict();
+export type EvidenceQuery = z.input<typeof evidenceQuerySchema>;
+export interface JournalPage {
+  entries: JournalEvent[];
+  cursor: number;
+  hasMore: boolean;
+}
+export interface EvidenceBrief {
+  schemaVersion: 2;
+  ticket: Pick<
+    Ticket,
+    | "ticketId"
+    | "revision"
+    | "title"
+    | "objective"
+    | "targetRepo"
+    | "baseCommit"
+    | "scope"
+    | "outOfScope"
+    | "acceptance"
+  >;
+  state: State;
+  worktree: string;
+  archived: boolean;
+  activeOperation: string | null;
+  error: string | null;
+  binding: {
+    attemptId: string | null;
+    deliveredSnapshot: string | null;
+    currentSnapshot: string | null;
+    matchesDeliveredSnapshot: boolean | null;
+    snapshotCheckedAt: string | null;
+    snapshotMaxAgeMs: number | null;
+  };
+  attempt: Pick<
+    Attempt,
+    | "id"
+    | "revision"
+    | "startedAt"
+    | "endedAt"
+    | "receipt"
+    | "finishReason"
+    | "termination"
+    | "cleanExit"
+    | "error"
+  > | null;
+  workerReport: Delivery | null;
+  changes: { paths: string[] | null; violations: string[] };
+  verification:
+    | (Pick<
+        Verification,
+        | "id"
+        | "attemptId"
+        | "revision"
+        | "startedAt"
+        | "endedAt"
+        | "before"
+        | "after"
+        | "passed"
+        | "cleanExit"
+        | "error"
+      > & {
+        matchesDeliveredSnapshot: boolean | null;
+        matchesCurrentSnapshot: boolean | null;
+        commands: {
+          args: string[];
+          exitCode: number | null;
+          timedOut: boolean;
+          outputTail: string;
+          outputTruncated: boolean;
+          serviceOutputTruncated: boolean;
+        }[];
+      })
+    | null;
+  review: Review | null;
+  uncertainInstructions: string[];
+  notes: string[];
+}
 export interface PruneResult {
   removed: string[];
   retentionDays: number;

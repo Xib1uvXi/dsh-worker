@@ -4,8 +4,13 @@ import type {
   TicketRecord,
   TrajectoryEntry,
   TrajectoryPage,
+  EvidenceQuery,
 } from "../../contracts/src/index.js";
-import { sessionStatsSchema } from "../../contracts/src/index.js";
+import {
+  evidenceQuerySchema,
+  sessionStatsSchema,
+} from "../../contracts/src/index.js";
+import { ensure } from "../../shared/src/util.js";
 import type { Store } from "../../core/src/store.js";
 
 type ObjectValue = Record<string, unknown>;
@@ -36,7 +41,17 @@ export function project(
   event: JournalEvent,
   record: TicketRecord,
 ): TrajectoryEntry {
-  const outer = obj(event.data);
+  // Apply the observable-preview boundary before any text or raw serialization,
+  // including native failed assistant attempts with embedded compact streams.
+  const raw: unknown = JSON.parse(
+    JSON.stringify(event.data, (key, value) => {
+      if (key === "stream") return undefined;
+      if (obj(value).type === "reasoning")
+        return { type: "reasoning", text: "[omitted]" };
+      return value;
+    }),
+  );
+  const outer = obj(raw);
   const notification = obj(outer.notification ?? outer);
   const params = obj(notification.params);
   const native = obj(params.event);
@@ -53,7 +68,7 @@ export function project(
     event.type === "harness.notification"
       ? str(native.type) || str(notification.method)
       : event.type;
-  let text = printable(native.data ?? event.data);
+  let text = printable(native.data ?? raw);
   if (kind === "assistant/message") text = content(obj(data.message).content);
   if (kind === "user/message") text = content(data.content);
   if (kind === "tool/call") text = printable(data.arguments);
@@ -61,15 +76,6 @@ export function project(
     text = toolResult
       ? content(toolResult.content)
       : printable(data.result ?? data.output ?? data);
-  // Raw events are already durable locally; preview does not expose reasoning blocks.
-  const raw = JSON.parse(
-    JSON.stringify(event.data, (key, value) => {
-      if (key === "stream") return undefined;
-      if (obj(value).type === "reasoning")
-        return { type: "reasoning", text: "[omitted]" };
-      return value;
-    }),
-  );
   return {
     seq: event.seq,
     time: event.time,
@@ -99,8 +105,15 @@ export function trajectory(
   id: string,
   after: number,
   activityOnly = false,
+  query: EvidenceQuery = {},
 ): TrajectoryPage {
+  const options = evidenceQuerySchema.parse({ ...query, after });
   const record = store.get(id, false);
+  ensure(
+    !options.attempt || record.attempts.some((a) => a.id === options.attempt),
+    "attempt_not_found",
+    "Attempt does not belong to this task",
+  );
   let cache = caches.get(store);
   if (!cache) {
     cache = new Map();
@@ -197,11 +210,22 @@ export function trajectory(
       };
     return { ...a };
   });
-  const rows = activityOnly ? [] : store.trajectoryEvents(after, 101, id);
+  const rows = activityOnly
+    ? []
+    : store.trajectoryEvents(after, options.limit + 1, id);
+  const page = rows.slice(0, options.limit);
   return {
-    entries: rows.slice(0, 100).map((e) => project(e, record)),
-    agents,
-    cursor: rows.slice(0, 100).at(-1)?.seq ?? after,
-    hasMore: rows.length > 100,
+    entries: page
+      .map((e) => project(e, record))
+      .filter(
+        (e) =>
+          (!options.attempt || e.attemptId === options.attempt) &&
+          (!options.kind || e.kind === options.kind),
+      ),
+    agents: agents.filter(
+      (a) => !options.attempt || a.attemptId === options.attempt,
+    ),
+    cursor: page.at(-1)?.seq ?? after,
+    hasMore: rows.length > options.limit,
   };
 }

@@ -1,6 +1,6 @@
 ---
 name: dsh-worker
-description: Dispatch scoped coding tasks through the dsh-worker CLI, send follow-up instructions, inspect status and errors, and review deliveries. The external orchestrator owns design, acceptance and integration; detailed execution trajectories stay on the Web.
+description: Dispatch scoped coding tasks through the dsh-worker CLI, send follow-up instructions, inspect status and errors, and review deliveries. The external orchestrator owns design, acceptance and integration; observable evidence is available through the CLI and Web.
 ---
 
 # CLI coding worker
@@ -25,9 +25,11 @@ dsh-worker wait TASK-01 --timeout 300 --home /path/to/controller
 
 Adapt [the ticket template](../examples/ticket.json) before use. Schema 2 binds the target repository, existing base commit, task ID/revision, objective, owned/excluded paths, acceptance criteria, verification commands and explicit model configuration. `prepare` creates an independent worktree. Existing revisions are immutable; requirement changes need the next revision, and repository/base changes need a new task.
 
+Use the [context template](../examples/context.md) to distinguish fixed decisions from local implementation choices. Workers investigate and fix in-scope defects autonomously; unresolved contract changes return evidence and a recommendation in delivery blockers. Prefer coherent behavioral assignments and avoid duplicate context or unnecessary gate reruns.
+
 The default worker model is `deepseek-v4-pro`. CLI and API tickets may omit `execution.model`; preparation stores the resolved default. The Web form and ticket template use the same model. An explicitly supplied model is preserved.
 
-The service continues execution after `run` returns. Schedule independent tasks within capacity while accounting for shared resources. A task cannot execute and verify concurrently. Use `wait` or `run/verify --wait` for bounded waiting. A wait timeout does not cancel or resend work. After a timeout or lost connection, inspect state before deciding whether another action is appropriate.
+The service continues execution after `run` returns. Schedule independent tasks within capacity while accounting for shared resources. A task cannot execute and verify concurrently. Use `wait` or `run/verify --wait` for bounded waiting; append `--brief` to return current review evidence instead of full status. A wait timeout does not cancel or resend work. After a timeout or lost connection, inspect state before deciding whether another action is appropriate.
 
 ## Send follow-up instructions
 
@@ -37,7 +39,7 @@ dsh-worker instruct TASK-01 --instruction-file instruction.txt --revision 1 --in
 
 The text file is sent as UTF-8. Alternatively, use `instruct ID --file instruction.json` with `{"revision":1,"instructionId":"TASK-01-note-1","instruction":"Additional implementation guidance"}`. All `--file -` options read JSON from stdin; `--instruction-file -` reads plain text. Files or stdin preserve literal text without shell interpolation.
 
-Instructions for a ready task queue for that revision's next attempt; running tasks receive them through the native Harness inbox. Keep a stable instruction ID: identical retries are deduplicated, but different content cannot reuse an ID. `queued` means pending, `sending` means awaiting a receipt, and `received` proves queue receipt only. Inspect `uncertain` deliveries and the Web trajectory before taking further action; never resend automatically. Scope or acceptance changes need a new revision; queued instructions do not silently transfer across revisions.
+Instructions for a ready task queue for that revision's next attempt; running tasks receive them through the native Harness inbox. Keep a stable instruction ID: identical retries are deduplicated, but different content cannot reuse an ID. `queued` means pending, `sending` means awaiting a receipt, and `received` proves queue receipt only. Inspect `uncertain` deliveries and the CLI or Web trajectory before taking further action; never resend automatically. Scope or acceptance changes need a new revision; queued instructions do not silently transfer across revisions.
 
 ## Diagnose and inspect
 
@@ -57,7 +59,7 @@ dsh-worker archive TASK-01 --home /path/to/controller
 dsh-worker restore TASK-01 --home /path/to/controller
 ```
 
-Full `status` includes attempts, deliveries, snapshots/diffs, verification, reviews and continuations. `artifact SHA256 --output FILE` retrieves hash-verified snapshot bytes and refuses to overwrite an existing destination. Messages, tool calls and detailed trajectories are viewed on the Web; there is no CLI trajectory-query command.
+Full `status` includes attempts, deliveries, snapshots/diffs, verification, reviews and continuations. `artifact SHA256 --output FILE` retrieves hash-verified snapshot bytes and refuses to overwrite an existing destination. Use `brief ID` for current-revision review evidence, `trajectory ID` for messages and tool calls, `activity ID` for observed agent activity, and `events ID` for control changes. The Web provides the same trajectory. Follow returned cursors while `hasMore` is true, including empty filtered pages; see [Efficient orchestration](../docs/orchestration.md) for filters, clipping and freshness semantics.
 
 `awaiting_review` is a submission. Inspect actual changes, scope, original acceptance, completion reason and process-exit evidence; run controller-owned `verify`; then record independent Spec and Standards assessments. A [review](../examples/review.json) must bind the exact revision, attempt and snapshot digest. Acceptance requires passing verification of that unchanged snapshot. `accepted` does not mean committed, integrated or released.
 

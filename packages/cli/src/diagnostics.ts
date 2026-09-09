@@ -260,7 +260,7 @@ export function diagnose(r: TicketView, home: string) {
     );
   if (status.uncertainInstructions.length)
     add(
-      "An instruction has uncertain delivery. Inspect the Web trajectory before deciding whether to send anything else.",
+      "An instruction has uncertain delivery. Inspect the CLI or Web trajectory before deciding whether to send anything else.",
       "status",
       r.ticket.ticketId,
     );
