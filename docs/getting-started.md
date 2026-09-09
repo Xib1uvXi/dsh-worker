@@ -4,6 +4,8 @@ This guide takes a new operator from a source checkout to a reviewed task. Comma
 
 The local service owns task state and executions. The external orchestrator prepares assignments, reviews evidence and integrates accepted changes. Engineering skills are optional and configurable; no personal skill suite is required.
 
+For a personal host skill that connects this CLI to your own engineering methods, see [Create your own orchestrator skill](orchestrator-setup.md). It provides a generation prompt, a portable template and checks for the generated configuration.
+
 ## 1. Check prerequisites and build
 
 Required: Node **24.18 or newer**, npm and Git 2.43 or newer. macOS arm64 is validated; Linux still needs separate platform verification.

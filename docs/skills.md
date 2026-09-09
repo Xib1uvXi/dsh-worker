@@ -2,6 +2,8 @@
 
 The orchestrator's bundled CLI skill describes how to control the worker. Worker engineering skills are a separate, opt-in configuration: each controller home can use its owner's methods, without installing a particular personal suite into this package.
 
+To create the external host's personal `dsh-orchestrator` skill, follow [Create your own orchestrator skill](orchestrator-setup.md). Its template selects your orchestration methods and connection settings; the configuration below selects the implementation methods available to the worker.
+
 Create `workflow.json` in the same home passed to `serve` and CLI commands:
 
 ```json

@@ -76,6 +76,8 @@ node dist/cli.js help
 
 `skill` returns portable instructions, their file path and the examples directory. An installed package exposes the same commands as `dsh-worker`. No protocol server or client registration is required.
 
+To connect your own engineering methods and delivery preferences, follow [Create your own orchestrator skill](docs/orchestrator-setup.md). It includes a generation prompt and a portable `dsh-orchestrator` template for your host; installing this package does not install personal host skills or select worker methods for you.
+
 | Action                            | Command after package installation                                                                        |
 | --------------------------------- | --------------------------------------------------------------------------------------------------------- |
 | Check service health              | `dsh-worker health`                                                                                       |
@@ -168,6 +170,7 @@ Runtime behavior uses the official `dsh --profile sdk` launcher and ordered patc
 | ---------------------------------------------- | ----------------------------------------------------------------------------- |
 | [Getting started](docs/getting-started.md)     | Installation, credentials, Dashboard login and the first reviewed task        |
 | [Bundled orchestrator skill](skill/SKILL.md)   | Assignment handoff and the CLI review loop                                    |
+| [Create your own orchestrator skill](docs/orchestrator-setup.md) | Generate and validate a personal orchestrator using your own methods |
 | [Skill configuration](docs/skills.md)          | Optional worker skills and instruction files                                  |
 | [CLI troubleshooting](docs/troubleshooting.md) | Error codes, failed verification, historical attempts and safe recovery       |
 | [Architecture](docs/architecture.md)           | Components, durable contracts and runtime integration                         |

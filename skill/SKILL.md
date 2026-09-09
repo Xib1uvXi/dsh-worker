@@ -11,6 +11,8 @@ The external orchestrator owns requirements, design, scheduling, independent rev
 
 For first-time setup, follow [Getting started](../docs/getting-started.md). No particular personal skill suite is required.
 
+When the user wants their own host-side orchestration skill, use [Create your own orchestrator skill](../docs/orchestrator-setup.md) and its template. Generate personal connection and method references in the owner's selected skill directory; keep them separate from the worker's implementation catalog.
+
 ## Prepare and execute
 
 Start the service once with `serve`. CLI and Web share its controller and durable state. Dispatch is disabled by default; enable it only within the user's authorized scope. Do not start a second controller because a client request failed. `doctor` initializes and closes the installed SDK/runtime without a model request; it does not test credentials. `workflow` inspects the selected home's optional engineering skills.
