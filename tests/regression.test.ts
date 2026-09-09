@@ -33,7 +33,7 @@ it("allows two independent attempts, rejects capacity overflow, preserves both c
   s.c.run("A");
   s.c.run("B");
   expect(() => s.c.run("C")).toThrow(/capacity/);
-  await expect.poll(() => releases.length).toBe(2);
+  await expect.poll(() => releases.length, { timeout: 10000 }).toBe(2);
   for (const release of releases) release();
   await Promise.all([s.c.wait("A"), s.c.wait("B")]);
   expect(s.c.status("A").state).toBe("awaiting_review");

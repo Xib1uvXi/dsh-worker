@@ -17,7 +17,7 @@ Use a task that can deliver and test one coherent behavior. Resolve shared inter
 5. Run controller `verify TASK-01 --wait --brief`; have an external independent reviewer assess Spec and Standards against the unchanged snapshot. Record the resulting review. Preserve valid prior evidence; after a fix, recheck affected behavior and the required batch gates. Acceptance is not integration or release.
 6. Integrate the accepted snapshot in dependency order under the user's authorization. Check the combined behavior before starting dependent assignments from their actual integrated base. Keep integration status in the orchestrator's task record.
 
-If the worker returns a blocker, read its evidence and recommendation. Resolve routine decisions within existing authorization. Contract changes use a new revision; recovery first accounts for old writers. A returned blocked delivery currently ends the attempt: there is no live structured question/answer protocol or automatic host wakeup. Existing `instruct` supports guidance to an active attempt, not changes to the assignment contract.
+If the worker returns a blocker, read its evidence and recommendation. Resolve routine decisions within existing authorization. Contract changes use a new revision; recovery first accounts for old writers. A blocked delivery ends its attempt. An explicit bound `kind: "answer"` continuation can preserve the conversation for the next run; see [Answer a blocked worker](execution-lifecycle.md#answer-a-blocked-worker). There is no live question/answer channel or automatic host wakeup. Existing `instruct` supports guidance to an active attempt, not changes to the assignment contract.
 
 ## Evidence query contract
 
@@ -45,3 +45,5 @@ HTTP equivalents are `GET /api/tickets/:id/brief`, `/trajectory`, `/activity`, a
 Compare the orchestrator alone, the orchestrator with the prior worker, and the orchestrator with an improvement on the same task inputs and acceptance criteria. Include preparation, coordination, waiting, review, repair and integration in elapsed time and cost. Keep failures in the denominator. Separate sample tasks used for tuning from those used for evaluation, and record the actual model/runtime/tool versions.
 
 Record accepted-and-integrated outcomes, defects, first-submission success, total time, human interventions, orchestrator coordination work and available usage/charges. Missing billing data remains unknown. Native session timing and decode-token statistics are not complete billing. A smaller JSON response measures interface overhead; it does not by itself prove a faster or better model task.
+
+For controller-run setup, immutable command baselines, credential references and explicit answers to blockers, see [Execution lifecycle](execution-lifecycle.md).

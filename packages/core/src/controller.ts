@@ -7,6 +7,9 @@ import type {
   TicketRecord,
   TicketView,
   Verification,
+  VerificationBaseline,
+  CommandRun,
+  Command,
 } from "../../contracts/src/index.js";
 import {
   actionSchema,
@@ -15,6 +18,9 @@ import {
   reviewSchema,
   continuationSchema,
 } from "../../contracts/src/index.js";
+import { executeCommand } from "../../runtime/src/commands.js";
+import { credentialNames } from "../../runtime/src/credentials.js";
+import { redactor } from "../../shared/src/redaction.js";
 import { runtimeVersion } from "../../runtime/src/version.js";
 import { pruneEphemeral } from "./retention.js";
 import { SnapshotReader } from "./snapshot-reader.js";
@@ -36,12 +42,7 @@ import {
   createCheckoutBaseline,
   validateRepo,
 } from "./git.js";
-import {
-  cleanEnv,
-  discover,
-  execute,
-  terminate,
-} from "../../shared/src/process.js";
+import { cleanEnv, discover, terminate } from "../../shared/src/process.js";
 import type { RuntimeAdapter } from "../../runtime/src/adapter.js";
 import { policyPatch, workflow, workerRole } from "../../runtime/src/policy.js";
 import { deliveryDocument } from "../../runtime/src/delivery.js";
@@ -350,7 +351,8 @@ export class Controller {
         );
         if (existing.ticket.revision === ticket.revision) {
           ensure(
-            canonical(existing.ticket) === canonical(ticket),
+            canonical(ticketSchema.parse(existing.ticket)) ===
+              canonical(ticket),
             "revision_conflict",
             "Cannot change an existing revision",
           );
@@ -387,6 +389,7 @@ export class Controller {
             "Ticket worktrees overlap",
           );
       const r: TicketRecord = {
+        verificationBaselines: existing?.verificationBaselines ?? [],
         archived: existing?.archived,
         instructions: existing?.instructions ?? [],
         ticket,
@@ -454,13 +457,45 @@ export class Controller {
       "Ticket is not ready to run",
     );
     checkOwnership(r);
-    cleanEnv(r.ticket.execution.envRequired);
+    cleanEnv([
+      ...r.ticket.execution.envRequired,
+      ...credentialNames(r.ticket.execution),
+    ]);
     const before = capture(r, this.artifactDir());
     ensure(!before.violations.length, "scope", before.violations.join("; "));
+    const answer = r.pendingAnswer;
+    const previous = answer ? this.current(r) : undefined;
+    if (answer) {
+      ensure(
+        previous?.id === answer.attemptId &&
+          previous.revision === r.ticket.revision &&
+          before.digest === answer.snapshotDigest,
+        "continuation_binding",
+        "Answer no longer matches the blocked delivery",
+      );
+      ensure(
+        previous.cleanExit &&
+          !discover(previous.marker, previous.processes).length,
+        "process_cleanup",
+        "Previous session still has a writer",
+      );
+      ensure(
+        existsSync(
+          join(this.home, "runs", previous.id, "harness-home", "sessions"),
+        ),
+        "session_missing",
+        "Previous session history is unavailable",
+      );
+    }
+    const secrets = redactor([
+      ...r.ticket.execution.envRequired,
+      ...credentialNames(r.ticket.execution),
+    ]);
     const attempt: Attempt = {
       id: uid(),
       revision: r.ticket.revision,
-      sessionId: `session-${uid().replaceAll("-", "")}`,
+      sessionId: previous?.sessionId ?? `session-${uid().replaceAll("-", "")}`,
+      resumedFrom: previous?.id,
       startedAt: now(),
       marker: uid(),
       processes: [],
@@ -515,6 +550,9 @@ export class Controller {
       baseCommit: r.ticket.baseCommit,
     });
     const prompt = `${workerRole}\n\nExecution workspace (controller-owned):\n${workspace}\nRead, edit and run assignment commands in workingDirectory. Resolve assignment-relative source, test and document paths there. The ticket targetRepo is the primary repository reference, not your execution checkout; preserve it. Read the worktree files before editing them.\n\n${local.context}\n\nAssignment:\n${canonical(r.ticket)}\n\nReview / continuation:\n${instruction}\n\nAdditional execution instructions within assigned scope:\n${queued.map((i) => i.text).join("\n\n")}\n\nCurrent snapshot: ${before.digest}\n\nYour final response must be ONLY a JSON delivery document matching this shape (no fences):\n${JSON.stringify(deliveryExample)}\nUse outcome blocked and blockers for unresolved issues. Do not write the delivery into the checkout.`;
+    const runtimePrompt = answer
+      ? `Answer to the previous blocker:\n${answer.instruction}\n\n${prompt}`
+      : prompt;
     immutable(
       join(dir, "input.json"),
       canonical({
@@ -522,7 +560,7 @@ export class Controller {
         attempt,
         before: before.digest,
         workflow: local.evidence,
-        promptHash: hash(prompt),
+        promptHash: hash(runtimePrompt),
       }),
     );
     this.store.update(id, "attempt.started", (record) => {
@@ -533,6 +571,7 @@ export class Controller {
         "Revision changed before launch",
       );
       record.attempts.push(attempt);
+      delete record.pendingAnswer;
       for (const i of record.instructions ?? [])
         if (queued.some((q) => q.id === i.id)) {
           i.status = "sending";
@@ -543,68 +582,94 @@ export class Controller {
       delete record.error;
     });
     const abort = new AbortController();
+    let runtimeEntered = false;
     const done = Promise.resolve().then(async () => {
       try {
-        const result = await this.options.runtime.execute(
-          {
-            ticket: r.ticket,
-            attemptId: attempt.id,
-            sessionId: attempt.sessionId,
-            worktree: r.worktree,
-            harnessHome: join(dir, "harness-home"),
-            controllerHome: this.home,
-            patches,
-            prompt,
-            dshBin: this.options.dshBin,
-          },
-          dir,
-          attempt.marker,
-          abort.signal,
-          (message) => {
-            if (message.type === "notification")
-              this.store.transaction(() => {
+        if (!(await this.prepareEnvironment(id, attempt, abort.signal))) return;
+        if (answer)
+          ensure(
+            capture(this.store.get(id)).digest === answer.snapshotDigest,
+            "stale_snapshot",
+            "Setup changed the answered snapshot",
+          );
+        runtimeEntered = true;
+        const result = secrets.value(
+          await this.options.runtime.execute(
+            {
+              ticket: r.ticket,
+              attemptId: attempt.id,
+              sessionId: attempt.sessionId,
+              worktree: r.worktree,
+              harnessHome: join(dir, "harness-home"),
+              controllerHome: this.home,
+              patches,
+              prompt: runtimePrompt,
+              resumeFromHome: previous
+                ? join(this.home, "runs", previous.id, "harness-home")
+                : undefined,
+              dshBin: this.options.dshBin,
+            },
+            dir,
+            attempt.marker,
+            abort.signal,
+            (message) => {
+              if (message.type === "stats")
                 this.store.event(id, "harness.notification", {
-                  ...message.notification,
+                  method: "session.event",
+                  params: {
+                    sessionId: message.sessionId,
+                    event: {
+                      type: "worker/stats",
+                      data: { stats: message.stats },
+                    },
+                  },
                   attemptId: attempt.id,
                 });
-                const { method, params } = message.notification;
-                if (
-                  method === "session.event" &&
-                  params.sessionId === attempt.sessionId
-                ) {
-                  const event = params.event as {
-                    type?: string;
-                    data?: { reason?: { kind?: string } };
-                  };
+              if (message.type === "notification")
+                this.store.transaction(() => {
+                  this.store.event(id, "harness.notification", {
+                    ...secrets.value(message.notification),
+                    attemptId: attempt.id,
+                  });
+                  const { method, params } = message.notification;
                   if (
-                    event.type === "agent/inbox/spliced" ||
-                    event.type === "turn/end"
+                    method === "session.event" &&
+                    params.sessionId === attempt.sessionId
                   ) {
-                    const record = this.store.get(id);
-                    const current = this.current(record);
-                    if (event.type === "agent/inbox/spliced")
-                      current.receipt = true;
-                    if (event.type === "agent/inbox/spliced")
-                      for (const i of record.instructions ?? [])
-                        if (queued.some((q) => q.id === i.id))
-                          i.status = "received";
-                    if (event.type === "turn/end")
-                      current.finishReason = event.data?.reason?.kind;
-                    this.store.save(record, "attempt.observed");
+                    const event = params.event as {
+                      type?: string;
+                      data?: { reason?: { kind?: string } };
+                    };
+                    if (
+                      event.type === "agent/inbox/spliced" ||
+                      event.type === "turn/end"
+                    ) {
+                      const record = this.store.get(id);
+                      const current = this.current(record);
+                      if (event.type === "agent/inbox/spliced")
+                        current.receipt = true;
+                      if (event.type === "agent/inbox/spliced")
+                        for (const i of record.instructions ?? [])
+                          if (queued.some((q) => q.id === i.id))
+                            i.status = "received";
+                      if (event.type === "turn/end")
+                        current.finishReason = event.data?.reason?.kind;
+                      this.store.save(record, "attempt.observed");
+                    }
                   }
-                }
+                });
+            },
+            (processes) => {
+              if (
+                canonical(this.current(this.store.get(id, false)).processes) ===
+                canonical(processes)
+              )
+                return;
+              this.store.update(id, "attempt.processes", (record) => {
+                this.current(record).processes = processes;
               });
-          },
-          (processes) => {
-            if (
-              canonical(this.current(this.store.get(id, false)).processes) ===
-              canonical(processes)
-            )
-              return;
-            this.store.update(id, "attempt.processes", (record) => {
-              this.current(record).processes = processes;
-            });
-          },
+            },
+          ),
         );
         let snapshot: Attempt["snapshot"];
         let snapshotError: unknown;
@@ -630,8 +695,10 @@ export class Controller {
           if (snapshotError)
             a.error = `${a.error ?? ""} Snapshot: ${String(snapshotError)}`;
           try {
-            a.delivery = deliverySchema.parse(
-              deliveryDocument(result.finalResponse ?? ""),
+            a.delivery = secrets.value(
+              deliverySchema.parse(
+                deliveryDocument(result.finalResponse ?? ""),
+              ),
             );
             ensure(
               a.delivery.ticketId === id &&
@@ -672,8 +739,18 @@ export class Controller {
       } catch (error) {
         this.store.update(id, "attempt.failed", (record) => {
           record.state = "interrupted";
-          record.error = String(error);
-          this.current(record).error = String(error);
+          if (!runtimeEntered)
+            for (const instruction of record.instructions ?? []) {
+              if (
+                instruction.attemptId === attempt.id &&
+                instruction.status === "sending"
+              ) {
+                instruction.status = "queued";
+                delete instruction.attemptId;
+              }
+            }
+          record.error = secrets.text(String(error));
+          this.current(record).error = secrets.text(String(error));
         });
       } finally {
         this.operations.delete(id);
@@ -681,6 +758,200 @@ export class Controller {
     });
     this.operations.set(id, { abort, done });
     return this.status(id);
+  }
+  private async runCommands(
+    record: TicketRecord,
+    commands: Command[],
+    marker: string,
+    signal: AbortSignal,
+    onProcesses: (processes: Attempt["processes"]) => void,
+    onProgress: (run: CommandRun) => void = () => {},
+    stopOnFailure = true,
+  ): Promise<CommandRun> {
+    const run: CommandRun = { startedAt: now(), commands: [], passed: false };
+    onProgress(run);
+    for (const command of commands) {
+      signal.throwIfAborted();
+      const result = await executeCommand(
+        command,
+        record.worktree,
+        record.ticket.execution,
+        marker,
+        signal,
+        onProcesses,
+      );
+      run.commands.push(result);
+      onProgress(run);
+      if (stopOnFailure && (result.exitCode !== 0 || result.timedOut)) break;
+    }
+    run.endedAt = now();
+    run.passed =
+      !signal.aborted &&
+      run.commands.length === commands.length &&
+      run.commands.every((c) => c.exitCode === 0 && !c.timedOut);
+    if (!run.passed)
+      run.error = signal.aborted
+        ? "Command run cancelled"
+        : "Command failed or timed out";
+    onProgress(run);
+    return run;
+  }
+  private async prepareEnvironment(
+    id: string,
+    attempt: Attempt,
+    signal: AbortSignal,
+  ) {
+    const record = this.store.get(id);
+    let phase = "setup";
+    const onProcesses = (processes: Attempt["processes"]) => {
+      if (
+        canonical(this.current(this.store.get(id, false)).processes) ===
+        canonical(processes)
+      )
+        return;
+      this.store.update(id, `${phase}.processes`, (r) => {
+        this.current(r).processes = processes;
+      });
+    };
+    const block = (message: string) => {
+      const snapshot = capture(this.store.get(id), this.artifactDir());
+      this.store.update(id, "setup.blocked", (r) => {
+        const a = this.current(r);
+        a.snapshot = snapshot;
+        a.endedAt = now();
+        a.cleanExit = true;
+        a.termination = "setup_failed";
+        for (const instruction of r.instructions ?? [])
+          if (
+            instruction.attemptId === a.id &&
+            instruction.status === "sending"
+          ) {
+            instruction.status = "queued";
+            delete instruction.attemptId;
+          }
+        a.error = message;
+        r.error = message;
+        r.state = "blocked";
+        delete r.activeOperation;
+      });
+      return false;
+    };
+    const setup = await this.runCommands(
+      record,
+      record.ticket.setup ?? [],
+      attempt.marker,
+      signal,
+      onProcesses,
+      (run) => {
+        this.store.update(id, "attempt.setup", (r) => {
+          this.current(r).setup = structuredClone(run);
+        });
+      },
+    );
+    signal.throwIfAborted();
+    if (!setup.passed) return block(setup.error ?? "Environment setup failed");
+    const ready = capture(record, this.artifactDir());
+    if (ready.violations.length) return block(ready.violations.join("; "));
+    if (
+      record.verificationBaselines?.some(
+        (b) => b.revision === record.ticket.revision,
+      )
+    )
+      return true;
+    const baseline: VerificationBaseline = {
+      revision: record.ticket.revision,
+      baseCommit: record.ticket.baseCommit,
+      worktree: join(
+        this.home,
+        "baselines",
+        `${id}-${record.ticket.revision}-${attempt.id}`,
+      ),
+      startedAt: now(),
+      commands: [],
+      passed: false,
+      comparable: false,
+    };
+    const persist = () =>
+      this.store.update(id, "verification.baseline", (r) => {
+        const baselines = (r.verificationBaselines ??= []);
+        const index = baselines.findIndex(
+          (b) => b.revision === baseline.revision,
+        );
+        if (index < 0) baselines.push(structuredClone(baseline));
+        else baselines[index] = structuredClone(baseline);
+      });
+    phase = "baseline";
+    persist(); // Reserve this revision's one baseline before any command runs.
+    const baseRecord: TicketRecord = {
+      ...record,
+      worktree: baseline.worktree,
+      owner: uid(),
+      checkoutBaseline: undefined,
+    };
+    createWorktree(baseRecord);
+    baseRecord.checkoutBaseline = createCheckoutBaseline(
+      baseRecord,
+      this.artifactDir(),
+    );
+    baseline.setup = await this.runCommands(
+      baseRecord,
+      record.ticket.setup ?? [],
+      attempt.marker,
+      signal,
+      onProcesses,
+      (run) => {
+        baseline.setup = structuredClone(run);
+        persist();
+      },
+    );
+    if (!baseline.setup.passed) {
+      baseline.error = "Baseline environment setup failed";
+      baseline.endedAt = now();
+      persist();
+      return block(baseline.error);
+    }
+    baseline.before = capture(baseRecord).digest;
+    try {
+      await this.runCommands(
+        baseRecord,
+        record.ticket.verification,
+        attempt.marker,
+        signal,
+        onProcesses,
+        (run) => {
+          baseline.commands = structuredClone(run.commands);
+          baseline.passed = run.passed;
+          baseline.endedAt = run.endedAt;
+          persist();
+        },
+        false,
+      );
+    } catch (error) {
+      const owned = this.current(this.store.get(id)).processes;
+      ensure(
+        !(await terminate(attempt.marker, owned)).length,
+        "process_cleanup",
+        "Baseline command cleanup remains uncertain",
+      );
+      onProcesses([]);
+      baseline.endedAt = now();
+      baseline.error = redactor([
+        ...record.ticket.execution.envRequired,
+        ...credentialNames(record.ticket.execution),
+      ]).text(String(error));
+    }
+    baseline.after = capture(baseRecord).digest;
+    baseline.comparable =
+      !signal.aborted &&
+      !baseline.error &&
+      baseline.commands.length === record.ticket.verification.length &&
+      baseline.before === baseline.after;
+    if (!baseline.comparable && !baseline.error)
+      baseline.error =
+        "Baseline incomplete or commands changed its snapshot; comparisons unavailable";
+    persist();
+    signal.throwIfAborted();
+    return true;
   }
   async cancel(id: string) {
     const active = this.operations.get(id);
@@ -735,45 +1006,71 @@ export class Controller {
     // the operation registered below.
     const done = Promise.resolve().then(async () => {
       try {
-        for (const cmd of r.ticket.verification) {
-          if (abort.signal.aborted) break;
-          const cwd = realpathSync(resolve(r.worktree, cmd.cwd));
-          ensure(
-            inside(r.worktree, cwd),
-            "verification_cwd",
-            "Verifier cwd escapes worktree",
+        if ((r.ticket.setup ?? []).length) {
+          verification.setup = await this.runCommands(
+            r,
+            r.ticket.setup,
+            verification.marker,
+            abort.signal,
+            (processes) => {
+              verification.processes = processes;
+              this.store.update(id, "verification.processes", (record) => {
+                record.verifications.at(-1)!.processes = processes;
+              });
+            },
+            (run) => {
+              verification.setup = structuredClone(run);
+              this.store.update(id, "verification.setup", (record) => {
+                record.verifications.at(-1)!.setup = verification.setup;
+              });
+            },
           );
-          const stop = () => {
-            void terminate(verification.marker, verification.processes).catch(
-              () => {},
-            );
-          };
-          abort.signal.addEventListener("abort", stop, { once: true });
-          try {
-            const result = await execute(
-              cmd.args,
-              cwd,
-              cmd.timeoutSeconds,
-              verification.marker,
-              (processes) => {
-                if (canonical(verification.processes) === canonical(processes))
-                  return;
-                verification.processes = processes;
-                this.store.update(id, "verification.processes", (record) => {
-                  record.verifications.at(-1)!.processes = processes;
-                });
-              },
-            );
-            verification.commands.push(result);
-            this.store.update(id, "verification.command", (record) => {
-              record.verifications.at(-1)!.commands = [
-                ...verification.commands,
-              ];
-            });
-            if (result.exitCode !== 0 || result.timedOut) break;
-          } finally {
-            abort.signal.removeEventListener("abort", stop);
-          }
+          ensure(
+            verification.setup.passed,
+            "setup_failed",
+            verification.setup.error ?? "Verification setup failed",
+          );
+          ensure(
+            capture(r).digest === before.digest,
+            "stale_snapshot",
+            "Setup changed the delivered snapshot",
+          );
+        }
+        const baseline = r.verificationBaselines?.find(
+          (b) => b.revision === r.ticket.revision,
+        );
+        for (const [index, cmd] of r.ticket.verification.entries()) {
+          if (abort.signal.aborted) break;
+          const result = await executeCommand(
+            cmd,
+            r.worktree,
+            r.ticket.execution,
+            verification.marker,
+            abort.signal,
+            (processes) => {
+              verification.processes = processes;
+              this.store.update(id, "verification.processes", (record) => {
+                record.verifications.at(-1)!.processes = processes;
+              });
+            },
+          );
+          const passed = result.exitCode === 0 && !result.timedOut;
+          const base = baseline?.comparable
+            ? baseline.commands[index]
+            : undefined;
+          verification.commands.push({
+            ...result,
+            comparison: passed
+              ? "pass"
+              : base
+                ? base.exitCode === 0 && !base.timedOut
+                  ? "regressed"
+                  : "pre-existing"
+                : "fail",
+          });
+          this.store.update(id, "verification.command", (record) => {
+            record.verifications.at(-1)!.commands = [...verification.commands];
+          });
         }
         verification.after = capture(
           this.store.get(id),
@@ -911,6 +1208,38 @@ export class Controller {
       "stale_snapshot",
       "Continuation snapshot is stale",
     );
+    if (c.kind === "answer") {
+      ensure(
+        r.state === "blocked" &&
+          a.revision === r.ticket.revision &&
+          a.cleanExit &&
+          a.receipt &&
+          a.finishReason === "completed" &&
+          a.termination === "completed" &&
+          a.delivery?.outcome === "blocked" &&
+          a.snapshot?.digest === c.snapshotDigest,
+        "answer_state",
+        "Answers require an unchanged, cleanly blocked delivery on the current revision",
+      );
+      ensure(
+        !(r.instructions ?? []).some(
+          (i) =>
+            i.attemptId === a.id && ["sending", "uncertain"].includes(i.status),
+        ),
+        "answer_uncertain",
+        "Resolve uncertain instructions before resuming a session",
+      );
+      ensure(
+        !discover(a.marker, a.processes).length,
+        "process_cleanup",
+        "Previous session still has a writer",
+      );
+      ensure(
+        existsSync(join(this.home, "runs", a.id, "harness-home", "sessions")),
+        "session_missing",
+        "Previous session history is unavailable; use a fresh continuation",
+      );
+    }
     const recoveryId = "recovery:" + uid();
     this.store.update(c.ticketId, "recovery.started", (record) => {
       record.activeOperation = recoveryId;
@@ -947,6 +1276,8 @@ export class Controller {
           }
           delete record.activeOperation;
           record.continuations.push(c);
+          if (c.kind === "answer") record.pendingAnswer = c;
+          else delete record.pendingAnswer;
           const delivered = record.attempts.at(-1);
           const resumeVerification =
             record.interruptedOperation === "verification" &&

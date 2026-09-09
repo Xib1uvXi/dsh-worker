@@ -82,6 +82,7 @@ function openCreate(ticket?: Ticket) {
       objective: ticket.objective,
       paths: ticket.scope.paths.join("\n"),
       acceptance: ticket.acceptance.map((a) => a.description).join("\n"),
+      setup: JSON.stringify(ticket.setup ?? []),
       verification: JSON.stringify(ticket.verification[0]!.args),
       provider: ticket.execution.provider,
       model: ticket.execution.model,
@@ -666,8 +667,19 @@ function renderDetail(t: TicketView) {
     instruction.placeholder = "说明如何处理不确定结果，以及接下来完成什么";
     instruction.setAttribute("aria-label", "续作要求");
     const report = el("pre");
-    let recovery: Omit<Continuation, "instruction"> | undefined;
+    const kind = el("select");
+    kind.setAttribute("aria-label", "续作方式");
+    for (const [value, label] of [
+      ["restart", "新会话继续"],
+      ["answer", "回答阻塞问题并恢复会话"],
+    ]) {
+      const option = el("option", label);
+      option.value = value!;
+      kind.append(option);
+    }
+    let recovery: Omit<Continuation, "instruction" | "kind"> | undefined;
     form.append(
+      kind,
       instruction,
       button("检查恢复条件", async () => {
         recovery = await request(
@@ -681,6 +693,7 @@ function renderDetail(t: TicketView) {
         return act({
           action: "recover",
           continuation: {
+            kind: kind.value as Continuation["kind"],
             ticketId: t.ticket.ticketId,
             revision: t.ticket.revision,
             attemptId: recovery.attemptId,
@@ -777,6 +790,10 @@ function renderDetail(t: TicketView) {
     );
     body.append(section);
   }
+  if (t.verificationBaselines?.length)
+    body.append(
+      disclosure("验证基线", JSON.stringify(t.verificationBaselines, null, 2)),
+    );
   if (t.verifications.length)
     body.append(
       disclosure("独立验证记录", JSON.stringify(t.verifications, null, 2)),
@@ -879,6 +896,7 @@ $("create-form").onsubmit = (event) => {
                   id: editingTicket?.acceptance[i]?.id ?? `AC${i + 1}`,
                   description,
                 })),
+              setup: JSON.parse(get("setup") || "[]"),
               verification: [
                 {
                   ...editingTicket?.verification[0],
@@ -890,9 +908,10 @@ $("create-form").onsubmit = (event) => {
                 ...editingTicket?.execution,
                 provider: get("provider"),
                 model: get("model"),
-                envRequired: editingTicket?.execution.envRequired ?? [
-                  "DEEPSEEK_API_KEY",
-                ],
+                envRequired: editingTicket?.execution.envRequired ?? [],
+                credentialEnv: editingTicket
+                  ? (editingTicket.execution.credentialEnv ?? [])
+                  : ["DEEPSEEK_API_KEY"],
               },
             },
       );

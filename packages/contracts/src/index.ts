@@ -34,6 +34,7 @@ export const runtimeSchema = z
     timeoutSeconds: z.number().int().min(1).max(86400).default(1800),
     patches: z.array(text).default([]),
     envRequired: z.array(z.string().regex(/^[A-Z][A-Z0-9_]*$/)).default([]),
+    credentialEnv: z.array(z.string().regex(/^[A-Z][A-Z0-9_]*$/)).default([]),
     plugins: pluginsSchema.optional(),
   })
   .strict();
@@ -56,6 +57,7 @@ export const ticketSchema = z
     outOfScope: z.array(text).default([]),
     acceptance: z.array(z.object({ id, description: text }).strict()).min(1),
     context: z.string().default(""),
+    setup: z.array(commandSchema).default([]),
     verification: z.array(commandSchema).min(1),
     execution: runtimeSchema,
   })
@@ -123,6 +125,7 @@ export const reviewSchema = z
   });
 export const continuationSchema = z
   .object({
+    kind: z.enum(["restart", "answer"]).default("restart"),
     ticketId: id,
     revision: z.number().int().positive(),
     attemptId: id,
@@ -212,7 +215,34 @@ export interface ProcessIdentity {
   pid: number;
   start: string;
 }
+export interface CommandResult {
+  args: string[];
+  exitCode: number | null;
+  output: string;
+  outputTruncated?: boolean;
+  timedOut: boolean;
+  confinement?: { mode: "workspace-write"; enforcement: "full" | "partial" };
+  comparison?: "pass" | "fail" | "regressed" | "pre-existing";
+}
+export interface CommandRun {
+  startedAt: string;
+  endedAt?: string;
+  commands: CommandResult[];
+  passed: boolean;
+  error?: string;
+}
+export interface VerificationBaseline extends CommandRun {
+  revision: number;
+  baseCommit: string;
+  worktree: string;
+  before?: string;
+  after?: string;
+  comparable: boolean;
+  setup?: CommandRun;
+}
 export interface Attempt {
+  setup?: CommandRun;
+  resumedFrom?: string;
   id: string;
   revision: number;
   sessionId: string;
@@ -237,19 +267,16 @@ export interface Verification {
   before: string;
   after?: string;
   passed: boolean;
-  commands: {
-    args: string[];
-    exitCode: number | null;
-    output: string;
-    outputTruncated?: boolean;
-    timedOut: boolean;
-  }[];
+  commands: CommandResult[];
+  setup?: CommandRun;
   marker: string;
   processes: ProcessIdentity[];
   cleanExit: boolean;
   error?: string;
 }
 export interface TicketRecord {
+  verificationBaselines?: VerificationBaseline[];
+  pendingAnswer?: Continuation;
   archived?: boolean;
   instructions?: WorkerInstruction[];
   ticket: Ticket;
@@ -317,6 +344,15 @@ export interface JournalPage {
   cursor: number;
   hasMore: boolean;
 }
+export interface CommandBrief
+  extends Omit<CommandResult, "output" | "outputTruncated"> {
+  outputTail: string;
+  outputTruncated: boolean;
+  serviceOutputTruncated: boolean;
+}
+export interface CommandRunBrief extends Omit<CommandRun, "commands"> {
+  commands: CommandBrief[];
+}
 export interface EvidenceBrief {
   schemaVersion: 2;
   ticket: Pick<
@@ -344,20 +380,29 @@ export interface EvidenceBrief {
     snapshotCheckedAt: string | null;
     snapshotMaxAgeMs: number | null;
   };
-  attempt: Pick<
-    Attempt,
-    | "id"
-    | "revision"
-    | "startedAt"
-    | "endedAt"
-    | "receipt"
-    | "finishReason"
-    | "termination"
-    | "cleanExit"
-    | "error"
-  > | null;
+  attempt:
+    | (Pick<
+        Attempt,
+        | "id"
+        | "revision"
+        | "startedAt"
+        | "endedAt"
+        | "receipt"
+        | "finishReason"
+        | "termination"
+        | "cleanExit"
+        | "error"
+        | "resumedFrom"
+      > & { setup?: CommandRunBrief })
+    | null;
   workerReport: Delivery | null;
   changes: { paths: string[] | null; violations: string[] };
+  baseline:
+    | (Omit<VerificationBaseline, "commands" | "setup"> & {
+        commands: CommandBrief[];
+        setup?: CommandRunBrief;
+      })
+    | null;
   verification:
     | (Pick<
         Verification,
@@ -375,6 +420,8 @@ export interface EvidenceBrief {
         matchesDeliveredSnapshot: boolean | null;
         matchesCurrentSnapshot: boolean | null;
         commands: {
+          comparison?: CommandResult["comparison"];
+          confinement?: CommandResult["confinement"];
           args: string[];
           exitCode: number | null;
           timedOut: boolean;

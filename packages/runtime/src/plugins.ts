@@ -168,6 +168,7 @@ export async function pluginsPatch(
             ...report.config,
             hooks,
             workspace: realpathSync(workspace),
+            statsPath: join(dir, "stats.json"),
           },
         },
       ],

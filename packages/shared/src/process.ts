@@ -1,3 +1,4 @@
+import { redactor } from "./redaction.js";
 import { execFile, execFileSync, spawn } from "node:child_process";
 import { promisify } from "node:util";
 import { readFile, readdir } from "node:fs/promises";
@@ -216,10 +217,18 @@ export async function execute(
   seconds: number,
   marker: string,
   onProcesses: (p: ProcessIdentity[]) => void,
+  options: {
+    env?: NodeJS.ProcessEnv;
+    argv?: string[];
+    redact?: ReturnType<typeof redactor>;
+    signal?: AbortSignal;
+  } = {},
 ) {
-  const child = spawn(args[0]!, args.slice(1), {
+  options.signal?.throwIfAborted();
+  const argv = options.argv ?? args;
+  const child = spawn(argv[0]!, argv.slice(1), {
     cwd,
-    env: cleanEnv([], marker),
+    env: options.env ?? cleanEnv([], marker),
     detached: true,
     stdio: ["ignore", "pipe", "pipe"],
   });
@@ -233,8 +242,13 @@ export async function execute(
   };
   child.stdout.setEncoding("utf8");
   child.stderr.setEncoding("utf8");
-  child.stdout.on("data", collect);
-  child.stderr.on("data", collect);
+  const redact = options.redact ?? redactor([]);
+  const stdout = redact.stream(collect);
+  const stderr = redact.stream(collect);
+  child.stdout.on("data", (data: string) => stdout.write(data));
+  child.stderr.on("data", (data: string) => stderr.write(data));
+  child.stdout.once("end", () => stdout.end());
+  child.stderr.once("end", () => stderr.end());
   let scanError: unknown;
   let rootObserved = false;
   const scan = () => {
@@ -274,15 +288,29 @@ export async function execute(
       scanError = error;
     });
   }, seconds * 1000);
-  let code: number | null;
+  const cancel = () => {
+    void terminate(marker, known).catch((error) => {
+      scanError = error;
+    });
+  };
+  options.signal?.addEventListener("abort", cancel, { once: true });
+  if (options.signal?.aborted) cancel();
+  const closed = new Promise<void>((resolve) =>
+    child.once("close", () => resolve()),
+  );
+  let spawnError: unknown;
+  let code: number | null = null;
   try {
     code = await new Promise<number | null>((resolve, reject) => {
       child.once("error", reject);
       child.once("exit", resolve);
     });
+  } catch (error) {
+    spawnError = error;
   } finally {
     clearInterval(polling);
     clearTimeout(timeout);
+    options.signal?.removeEventListener("abort", cancel);
   }
   await scanning;
   const remaining = await terminate(marker, known);
@@ -292,5 +320,7 @@ export async function execute(
     "process_cleanup",
     "Could not prove verifier process cleanup",
   );
+  await closed;
+  if (spawnError) throw spawnError;
   return { args, exitCode: code, output, outputTruncated, timedOut };
 }

@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 export const name = "capability-probe";
 export const inject = [
   "workerCapabilitiesReady",
+  "workerStats",
   "agents",
   "tools",
   "sessions",
@@ -104,9 +105,7 @@ export async function apply(ctx, config) {
       session.append("step/end", { turn: 1, step: 1 });
       await new Promise((r) => setTimeout(r, 20));
       await ctx.parallel("session/flush", session);
-      result.stats = session
-        .snapshotEvents()
-        .filter((e) => e.type === "worker/stats");
+      result.stats = [{ data: { stats: ctx.workerStats[String(session.id)] } }];
     }
   } catch (error) {
     result.error = String(error);

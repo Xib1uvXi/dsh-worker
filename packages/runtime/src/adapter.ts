@@ -1,16 +1,21 @@
 import { fork } from "node:child_process";
-import { appendFileSync } from "node:fs";
+import { appendFileSync, rmSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { join } from "node:path";
 import type { ProcessIdentity } from "../../contracts/src/index.js";
 import { atomic, delay, ensure } from "../../shared/src/util.js";
 import {
-  cleanEnv,
   discover,
   discoverAsync,
   identity,
   terminate,
 } from "../../shared/src/process.js";
+import { redactor } from "../../shared/src/redaction.js";
+import {
+  credentialNames,
+  credentialPatch,
+  taskEnvironment,
+} from "./credentials.js";
 import type { RunnerRequest, RunnerMessage } from "./runner.js";
 export interface RuntimeOutcome {
   receipt: boolean;
@@ -64,8 +69,23 @@ export class SdkRuntime implements RuntimeAdapter {
     onProcesses: (p: ProcessIdentity[]) => void,
   ): Promise<RuntimeOutcome> {
     const requestFile = join(dir, "request.json");
-    atomic(requestFile, JSON.stringify(request));
-    const env = cleanEnv(request.ticket.execution.envRequired, marker);
+    const secrets = redactor([
+      ...request.ticket.execution.envRequired,
+      ...credentialNames(request.ticket.execution),
+    ]);
+    const credentials = credentialPatch(request.ticket.execution, dir);
+    const launchRequest = credentials
+      ? {
+          ...request,
+          patches: [
+            ...request.patches.slice(0, -1),
+            credentials,
+            ...request.patches.slice(-1),
+          ],
+        }
+      : request;
+    atomic(requestFile, JSON.stringify(launchRequest));
+    const env = taskEnvironment(request.ticket.execution, marker);
     const child = fork(this.runnerPath, ["--runner", requestFile], {
       cwd: request.worktree,
       env,
@@ -126,10 +146,14 @@ export class SdkRuntime implements RuntimeAdapter {
         scanError = error;
       }
     };
-    const log = (data: Buffer) =>
+    const log = (data: string) =>
       appendFileSync(join(dir, "stderr.log"), data, { mode: 0o600 });
-    child.stderr?.on("data", log);
-    child.stdout?.on("data", log);
+    const stderr = secrets.stream(log);
+    const stdout = secrets.stream(log);
+    child.stderr?.on("data", (data: Buffer) => stderr.write(data));
+    child.stdout?.on("data", (data: Buffer) => stdout.write(data));
+    child.stderr?.once("end", () => stderr.end());
+    child.stdout?.once("end", () => stdout.end());
     const cancel = () => {
       termination = "cancelled";
       if (child.connected) child.send("cancel");
@@ -172,7 +196,8 @@ export class SdkRuntime implements RuntimeAdapter {
         }
       }
     }, 100);
-    child.on("message", (value: RunnerMessage) => {
+    child.on("message", (raw: RunnerMessage) => {
+      const value = secrets.value(raw);
       try {
         if (value.type === "instruction-result") {
           const item = pending.get(value.id);
@@ -243,7 +268,9 @@ export class SdkRuntime implements RuntimeAdapter {
     } catch (error) {
       scanError = error;
     }
-    return {
+    if (!scanError && !survivors.length)
+      rmSync(join(dir, "credentials"), { recursive: true, force: true });
+    return secrets.value({
       receipt: outcome?.receipt ?? false,
       finishReason: outcome?.finishReason,
       finalResponse: outcome?.finalResponse,
@@ -263,6 +290,6 @@ export class SdkRuntime implements RuntimeAdapter {
           : !outcome || code !== 0 || outcome.error
             ? "error"
             : "completed",
-    };
+    });
   }
 }
