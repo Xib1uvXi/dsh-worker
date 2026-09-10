@@ -264,7 +264,13 @@ async function loadOverview() {
 }
 function render() {
   if (!overview) return;
-  const tickets = overview.tickets;
+  const archived = $<HTMLSelectElement>("archive-filter").value;
+  // Metrics and navigation share the selected archive scope. Search and status
+  // narrow the list without changing the workspace summary.
+  const tickets = overview.tickets.filter(
+    (t) =>
+      archived === "all" || Boolean(t.archived) === (archived === "archived"),
+  );
   const counts = [
     ["实现中", tickets.filter((t) => t.state === "running").length],
     ["待审查", tickets.filter((t) => t.state === "awaiting_review").length],
@@ -293,11 +299,8 @@ function render() {
   );
   const search = $<HTMLInputElement>("search").value.toLowerCase();
   const filter = $<HTMLSelectElement>("filter").value;
-  const archived = $<HTMLSelectElement>("archive-filter").value;
   const visible = tickets.filter(
     (t) =>
-      (archived === "all" ||
-        Boolean(t.archived) === (archived === "archived")) &&
       `${t.ticket.title} ${t.ticket.objective} ${t.ticket.project ?? ""} ${t.ticket.ticketId}`
         .toLowerCase()
         .includes(search) &&
@@ -407,10 +410,13 @@ function render() {
   if (!visible.length) {
     const empty = el("div", undefined, "empty");
     empty.append(
-      el("strong", tickets.length ? "没有匹配的任务" : "准备好下一项工作"),
+      el(
+        "strong",
+        overview.tickets.length ? "没有匹配的任务" : "准备好下一项工作",
+      ),
       el(
         "span",
-        tickets.length
+        overview.tickets.length
           ? "调整搜索或状态筛选。"
           : "创建一份明确的派工单，或由高级模型通过 CLI + Skill 调度。",
       ),

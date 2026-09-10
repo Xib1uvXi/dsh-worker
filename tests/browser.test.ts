@@ -5,6 +5,84 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { Controller } from "../packages/core/src/controller.js";
 import { startHttp } from "../packages/server/src/http.js";
 import { fixture, FakeRuntime } from "./helpers.js";
+it("scopes workspace metrics to the archive selection before search and status filters", async () => {
+  const f = fixture();
+  const c = new Controller({ home: f.home, runtime: new FakeRuntime() });
+  const ticket = c.prepare(f.ticket);
+  const http = await startHttp(c, {
+    port: 0,
+    token: "b".repeat(64),
+    webDir: resolve("dist/web"),
+  });
+  const browser = await chromium.launch({ headless: true });
+  try {
+    const page = await browser.newPage();
+    page.setDefaultTimeout(5000);
+    // Reproduce a current accepted task alongside an archived interruption.
+    const tickets = [
+      { ...ticket, state: "accepted", archived: false, stale: false },
+      { ...ticket, state: "interrupted", archived: true, stale: false },
+    ];
+    await page.route("**/api/overview", async (route) => {
+      const response = await route.fetch();
+      const overview = (await response.json()) as Record<string, unknown>;
+      await route.fulfill({
+        json: {
+          ...overview,
+          tickets: tickets.map((t, i) => ({
+            ...t,
+            ticket: { ...t.ticket, ticketId: `METRIC-${i}` },
+          })),
+        },
+      });
+    });
+    const metrics = () =>
+      page.locator("#metrics .metric-number").allTextContents();
+    await page.goto(http.url + "/#token=" + "b".repeat(64));
+    await expect.poll(metrics).toEqual(["0", "0", "0", "1"]);
+    expect(await page.locator("#task-count").textContent()).toBe("1 个任务");
+
+    await page.getByLabel("归档筛选", { exact: true }).selectOption("archived");
+    await expect.poll(metrics).toEqual(["0", "0", "1", "0"]);
+    expect(await page.locator(".task .task-id").allTextContents()).toEqual([
+      "METRIC-1",
+    ]);
+    await page.getByLabel("归档筛选", { exact: true }).selectOption("all");
+    await expect.poll(metrics).toEqual(["0", "0", "1", "1"]);
+    expect(await page.locator("#task-count").textContent()).toBe("2 个任务");
+
+    // All counters share the scope, including expired acceptance evidence.
+    tickets.push(
+      { ...ticket, state: "running", archived: false, stale: false },
+      { ...ticket, state: "awaiting_review", archived: true, stale: false },
+      { ...ticket, state: "accepted", archived: false, stale: true },
+      { ...ticket, state: "accepted", archived: true, stale: false },
+    );
+    await page.getByRole("button", { name: "刷新", exact: true }).click();
+    await expect.poll(metrics).toEqual(["1", "1", "2", "2"]);
+    await page.getByLabel("归档筛选", { exact: true }).selectOption("archived");
+    await expect.poll(metrics).toEqual(["0", "1", "1", "1"]);
+    await page.getByLabel("归档筛选", { exact: true }).selectOption("active");
+    await expect.poll(metrics).toEqual(["1", "0", "1", "1"]);
+
+    await page
+      .getByLabel("筛选状态", { exact: true })
+      .selectOption("attention");
+    expect(await page.locator(".task .task-id").allTextContents()).toEqual([
+      "METRIC-4",
+    ]);
+    await page.getByLabel("搜索任务", { exact: true }).fill("no matching task");
+    await expect.poll(() => page.locator(".task").count()).toBe(0);
+    expect(await metrics()).toEqual(["1", "0", "1", "1"]);
+    await page.getByRole("button", { name: "看板", exact: true }).click();
+    expect(await metrics()).toEqual(["1", "0", "1", "1"]);
+  } finally {
+    await browser.close();
+    await http.close();
+    await c.close();
+  }
+}, 15000);
+
 it("lets the user explicitly restart a pending delivery-only recovery from the Web", async () => {
   const f = fixture();
   const runtime = new FakeRuntime();
@@ -34,9 +112,9 @@ it("lets the user explicitly restart a pending delivery-only recovery from the W
     await page.goto(http.url + "/#token=" + "b".repeat(64));
     await page.locator(".task").click();
     const kind = page.getByLabel("续作方式", { exact: true });
-    expect(await kind.locator("option").allTextContents()).toEqual([
-      "新会话继续",
-    ]);
+    await expect
+      .poll(() => kind.locator("option").allTextContents())
+      .toEqual(["新会话继续"]);
     await page
       .getByLabel("续作要求", { exact: true })
       .fill("Continue from the inspected external change");
