@@ -19,7 +19,7 @@ npm run build
 node dist/cli.js help
 ```
 
-The Harness runtime requires native dependencies, including `fs-ext`. Installation must run their lifecycle scripts and may need a C++ build toolchain (Xcode Command Line Tools on macOS). A source-only `--ignore-scripts` install does not establish runtime readiness. Follow your package manager’s script policy; `doctor` reports missing persistence dependencies before starting Harness.
+The Harness runtime uses native dependencies such as `koffi` for persistence and `node-pty` for optional terminals. Use the published bindings for your platform; when a binding needs rebuilding, installation must permit its lifecycle scripts and may need a C++ build toolchain (Xcode Command Line Tools on macOS). A source-only `--ignore-scripts` install does not establish runtime readiness. Follow your package manager’s script policy; `doctor` reports missing persistence dependencies before starting Harness.
 
 Expected: installation and build exit successfully, and `help` lists the CLI commands. To run the project's full test suite, install its test browser with `npx playwright install chromium`, then run `npm run check`. The test browser is not needed merely to open the Dashboard in your own browser.
 
@@ -139,7 +139,7 @@ node dist/cli.js status EXAMPLE-01 --summary
 
 Replace `EXAMPLE-01` in subsequent commands if you chose another ID. Expected: state `ready`, with an owned worktree. Preparation does not call the model. Existing revisions cannot be edited in place; repository or base changes require a new task.
 
-The default worker model is `deepseek-v4-pro`. CLI and API tickets may omit `execution.model`; preparation stores the resolved default. The Web form and ticket template use the same model. An explicitly supplied model is preserved.
+The default worker model is `deepseek-flash`. CLI and API tickets may omit `execution.model`; preparation stores the resolved default. The Web form and ticket template use the same model. An explicitly supplied model is preserved.
 
 ## 7. Run, observe and send instructions
 

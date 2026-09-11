@@ -18,7 +18,7 @@ export async function checkRuntimeDependencies() {
     throw Object.assign(
       new Error(
         `Harness persistence dependencies could not load: ${String(cause)}. ` +
-          "Install with required lifecycle scripts enabled. If scripts were skipped, run npm rebuild fs-ext in the installation directory, then rerun doctor; see docs/troubleshooting.md.",
+          "Check the underlying module error and install the missing dependency or rebuild its native binding with lifecycle scripts permitted, then rerun doctor; see docs/troubleshooting.md.",
         { cause },
       ),
       { code: "runtime_dependencies" },

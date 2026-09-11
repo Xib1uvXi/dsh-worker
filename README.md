@@ -59,7 +59,7 @@ node dist/cli.js review --file review.json
 
 The [ticket template](examples/ticket.json) needs a real repository, an existing base commit, owned scope, acceptance criteria, verification commands and explicit execution settings. Replace `EXAMPLE-01` if you choose another ticket ID. A task worktree starts from the specified commit and does not inherit uncommitted changes or ignored dependencies from the primary checkout. Use `setup` for controller-run dependency installation before the model starts. Each revision also gets a separate verification baseline; [Execution lifecycle](docs/execution-lifecycle.md) explains setup, command confinement, failure comparisons, credential redaction and answers to blocked workers.
 
-The default worker model is `deepseek-v4-pro`. CLI and API tickets may omit `execution.model`; preparation stores the resolved default. The Web form and ticket template use the same model. An explicitly supplied model is preserved.
+The default worker model is `deepseek-flash`. CLI and API tickets may omit `execution.model`; preparation stores the resolved default. The Web form and ticket template use the same model. An explicitly supplied model is preserved.
 
 The [review template](examples/review.json) must identify the current ticket revision, attempt and snapshot, with the external reviewer's actual Spec and Standards decisions. The examples are templates, not ready-to-run assignments or approvals.
 
@@ -164,7 +164,7 @@ npx dsh-worker help
 
 Runtime behavior uses the official `dsh --profile sdk` launcher and ordered patches, with the worker policy applied last. There is no Harness core fork or replacement model loop. See [Architecture](docs/architecture.md) for persistence, process ownership and interface details.
 
-`serve --harness-home DIR` (repeatable) observes source-qualified Harness session headers. It selects the highest canonical v0/v1/v2 generation, supports plain/zstd and bounds reads without reading transcripts or falling back from an unsupported generation. Parent metadata does not prove current liveness; missing or corrupt sources remain explicit diagnostics.
+`serve --harness-home DIR` (repeatable) observes source-qualified Harness session headers. It selects the highest canonical v0/v1/v2/v3 generation, supports plain/zstd and bounds reads without reading transcripts or falling back from an unsupported generation. Parent metadata does not prove current liveness; missing or corrupt sources remain explicit diagnostics.
 
 ## Documentation
 

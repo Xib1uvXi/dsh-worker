@@ -261,9 +261,9 @@ it("serves CSP-protected assets and refuses traversal or unexpected host", async
   ).toBe(403);
   expect((await fetch(s.http.url + "/%2e%2e/package.json")).status).toBe(404);
 });
-it("reads canonical v0/v1/v2 compressed/plain headers, never the transcript", async () => {
+it("reads canonical v0/v1/v2/v3 compressed/plain headers, never the transcript", async () => {
   const f = fixture();
-  for (const version of [0, 1, 2]) {
+  for (const version of [0, 1, 2, 3]) {
     const dir = join(f.home, "sessions", "project", `s${version}`);
     mkdirSync(dir, { recursive: true });
     const data =
@@ -281,27 +281,73 @@ it("reads canonical v0/v1/v2 compressed/plain headers, never the transcript", as
     );
   }
   const result = await sessions([f.home]);
-  expect(result.sessions).toHaveLength(3);
+  expect(result.sessions).toHaveLength(4);
   expect(JSON.stringify(result)).not.toContain("SECRET");
   expect(result.sessions.every((s) => s.liveness === "unknown")).toBe(true);
 });
-it("does not fall back from unknown or corrupted highest session generation", async () => {
+it.each([3, 4])(
+  "does not fall back from corrupted or unsupported generation %s",
+  async (version) => {
+    const f = fixture();
+    const dir = join(f.home, "sessions", "project", "sample");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(
+      join(dir, "session.jsonl"),
+      JSON.stringify({
+        type: "session",
+        version: 0,
+        id: "sample",
+        createdAt: 1,
+      }) + "\n",
+    );
+    writeFileSync(join(dir, `session.v${version}.jsonl`), "broken\n");
+    const result = await sessions([f.home]);
+    expect(result.sessions).toHaveLength(0);
+    if (version === 4)
+      expect(result.diagnostics.join()).toContain("highest generation 4");
+    else expect(result.diagnostics.join()).toMatch(/JSON|Unexpected/);
+  },
+);
+it("selects V3 over V2, links parents, and validates the V3 header identity", async () => {
   const f = fixture();
-  const dir = join(f.home, "sessions", "project", "sample");
-  mkdirSync(dir, { recursive: true });
-  writeFileSync(
-    join(dir, "session.jsonl"),
-    JSON.stringify({
-      type: "session",
-      version: 0,
-      id: "sample",
-      createdAt: 1,
-    }) + "\n",
-  );
-  writeFileSync(join(dir, "session.v3.jsonl"), "broken");
+  const write = (id: string, version: number, fields = {}) => {
+    const dir = join(f.home, "sessions", "project", id);
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(
+      join(dir, `session.v${version}.jsonl`),
+      JSON.stringify({
+        type: "session",
+        version,
+        id,
+        createdAt: 1,
+        ...fields,
+      }) + "\n",
+    );
+  };
+  write("parent", 2, { cwd: "/old" });
+  write("parent", 3, { cwd: "/current" });
+  write("child", 3, { parentSession: "parent", origin: "subagent" });
   const result = await sessions([f.home]);
-  expect(result.sessions).toHaveLength(0);
-  expect(result.diagnostics.join()).toContain("highest generation 3");
+  expect(result.diagnostics).toEqual([]);
+  expect(result.sessions).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({ id: "parent", format: 3, cwd: "/current" }),
+      expect.objectContaining({
+        id: "child",
+        parent: "parent",
+        origin: "subagent",
+      }),
+    ]),
+  );
+  expect(result.sessions).toHaveLength(2);
+  write("child", 3, { id: "impostor" });
+  expect((await sessions([f.home])).diagnostics.join()).toContain(
+    "identity mismatch",
+  );
+  write("child", 3, { version: 2 });
+  expect((await sessions([f.home])).diagnostics.join()).toContain(
+    "generation mismatch",
+  );
 });
 it("reports a compressed session removed between stat and open without crashing", async () => {
   const f = fixture();

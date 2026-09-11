@@ -80,13 +80,13 @@ it("identifies the actual isolated SDK workspace in the assignment without touch
     "preserve primary edits\n",
   );
 }, 20000);
-it.each([undefined, "deepseek-v4-flash"])(
+it.each([undefined, "custom-model"])(
   "runs the public SDK subprocess with the default or explicit model (%s) and persists raw events",
   async (model) => {
     const s = setup();
     s.c.prepare({
       ...s.ticket,
-      context: `FIXTURE_EXPECT_MODEL=${model ?? "deepseek-v4-pro"}`,
+      context: `FIXTURE_EXPECT_MODEL=${model ?? "deepseek-flash"}`,
       execution: { ...s.ticket.execution, model },
     });
     s.c.run(s.ticket.ticketId);

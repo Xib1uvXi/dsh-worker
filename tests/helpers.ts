@@ -48,7 +48,6 @@ export function fixture() {
     ],
     execution: {
       provider: "deepseek-official",
-      model: "deepseek-v4-pro",
       envRequired: [],
       timeoutSeconds: 10,
     },

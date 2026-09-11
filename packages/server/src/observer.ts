@@ -6,7 +6,7 @@ import type { SessionSummary } from "../../contracts/src/index.js";
 import { ensure } from "../../shared/src/util.js";
 const headerSchema = z.object({
   type: z.literal("session"),
-  version: z.number().int().min(0).max(2),
+  version: z.number().int().min(0).max(3),
   id: z.string().min(1).max(1000),
   createdAt: z.number().int().nonnegative(),
   cwd: z.string().optional(),
@@ -112,7 +112,7 @@ export async function sessions(homes: string[]) {
               "No canonical session artifact",
             );
             ensure(
-              selected.version <= 2,
+              selected.version <= 3,
               "session_version",
               `Unsupported highest generation ${selected.version}`,
             );

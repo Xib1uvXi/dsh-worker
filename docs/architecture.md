@@ -20,7 +20,9 @@ SQLite is authoritative; a journal in the same transaction provides ordered, rep
 
 ## Compatibility
 
-Controller data uses schema 2 and `~/.dsh-worker-v2` by default. An unsupported SQLite schema is refused; legacy contracts must be converted explicitly. Session observation does not import controller history or promote it to acceptance evidence. Configuration and controller data remain outside the repository.
+Controller data uses schema 2 and `~/.dsh-worker-v2` by default. An unsupported SQLite schema is refused; legacy contracts must be converted explicitly. Session observation does not import controller history or promote it to acceptance evidence. The observer reads V0–V3 headers only. Harness session format V3 is separate from controller schema 2; this dependency upgrade does not migrate the controller database.
+
+When resuming an older attempt, the runner copies its session directory into the new attempt's Harness home before using the public `agents.resume` API. Harness performs the supported V2-to-V3 transcript migration and preserves the old generation. The original attempt remains unchanged. Migration failure must remain a failed continuation, without a fresh-session fallback or automatic resend. V3 session artifacts cannot be read by Harness versions that only support V2; retain prior attempt homes when planning a runtime rollback. Configuration and controller data remain outside the repository.
 
 ## Acceptance for this rebuild
 

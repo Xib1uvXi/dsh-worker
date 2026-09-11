@@ -3,6 +3,8 @@ import { afterEach, expect, it, vi } from "vitest";
 import { execFileSync } from "node:child_process";
 import {
   existsSync,
+  copyFileSync,
+  readdirSync,
   readFileSync,
   writeFileSync,
   mkdirSync,
@@ -12,6 +14,8 @@ import {
 import { join, resolve } from "node:path";
 import { Controller } from "../packages/core/src/controller.js";
 import { evidenceBrief } from "../packages/core/src/evidence.js";
+import type { RunnerRequest } from "../packages/runtime/src/runner.js";
+import { policyPatch } from "../packages/runtime/src/policy.js";
 import { SdkRuntime } from "../packages/runtime/src/adapter.js";
 import {
   credentialPatch,
@@ -343,3 +347,94 @@ it("keeps unsent instructions queued when setup is cancelled", async () => {
   expect(s.runtime.count).toBe(0);
   expect(marked(cancelled.attempts[0]!.marker)).toEqual([]);
 });
+
+it.each([false, true])(
+  "migrates a released V2 session without changing its source or replaying a failed migration (corrupt=%s)",
+  async (corrupt) => {
+    const f = fixture();
+    const sessionId = "worker-v2-migration-fixture";
+    const sourceHome = join(f.root, "previous-harness");
+    const sourceDir = join(sourceHome, "sessions", "--root--", sessionId);
+    mkdirSync(sourceDir, { recursive: true });
+    const filename = corrupt ? "session.v2.jsonl" : "session.v2.jsonl.zstd";
+    const source = join(sourceDir, filename);
+    if (corrupt)
+      writeFileSync(
+        source,
+        JSON.stringify({
+          type: "session",
+          version: 2,
+          id: sessionId,
+          createdAt: 1,
+          cwd: "/",
+          isSeeded: false,
+          delegationDepth: 0,
+        }) + "\n{broken}\n",
+      );
+    else copyFileSync(resolve("tests/fixtures/session.v2.jsonl.zstd"), source);
+    const before = readFileSync(source);
+    const dir = join(f.home, "runs", "migration");
+    mkdirSync(dir, { recursive: true });
+    const trace = join(dir, "prompts.txt");
+    const patch = join(dir, "provider.patch.json");
+    writeFileSync(
+      patch,
+      JSON.stringify([
+        {
+          insert: [
+            {
+              id: "migration-provider",
+              name: resolve("tests/fixtures/migration-provider.mjs"),
+              config: { trace },
+            },
+          ],
+        },
+      ]),
+    );
+    const request: RunnerRequest = {
+      ticket: f.ticket,
+      attemptId: "migration",
+      sessionId,
+      worktree: f.repo,
+      controllerHome: f.home,
+      harnessHome: join(dir, "harness"),
+      resumeFromHome: sourceHome,
+      patches: [patch, policyPatch(dir)],
+      prompt: "Choose X and continue",
+    };
+    const marker = randomUUID();
+    const result = await new SdkRuntime().execute(
+      request,
+      dir,
+      marker,
+      new AbortController().signal,
+      () => {},
+      () => {},
+    );
+    expect(readFileSync(source)).toEqual(before);
+    expect(readdirSync(sourceDir)).toEqual([filename]);
+    const target = join(request.harnessHome, "sessions", "--root--", sessionId);
+    expect(readFileSync(join(target, filename))).toEqual(before);
+    if (corrupt) {
+      expect(result.receipt).toBe(false);
+      expect(result.error).toBeTruthy();
+      expect(existsSync(trace)).toBe(false);
+      expect(
+        readdirSync(target).some((name) => name.startsWith("session.v3.")),
+      ).toBe(false);
+    } else {
+      expect(result, JSON.stringify(result)).toMatchObject({
+        receipt: true,
+        finishReason: "completed",
+        cleanExit: true,
+        finalResponse: "Continued migration-anchor-7419 with X",
+      });
+      expect(readFileSync(trace, "utf8")).toBe("prompt\n");
+      expect(
+        readdirSync(target).some((name) => name.startsWith("session.v3.")),
+      ).toBe(true);
+    }
+    expect(marked(marker)).toEqual([]);
+  },
+  45000,
+);

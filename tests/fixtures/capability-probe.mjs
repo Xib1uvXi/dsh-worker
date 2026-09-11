@@ -34,7 +34,7 @@ export async function apply(ctx, config) {
     owner = await ctx.agents.create({
       sessionId: randomUUID(),
       meta: { cwd: config.workspace },
-      agentOptions: { provider: "deepseek-official", model: "deepseek-v4-pro" },
+      agentOptions: { provider: "deepseek-official", model: "deepseek-flash" },
     });
     if (config.scenario === "mcp" || config.scenario === "http") {
       result.echo = await call("mcp__fixture__echo", { text: "hello" });
