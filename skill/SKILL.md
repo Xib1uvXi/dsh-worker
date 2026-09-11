@@ -31,7 +31,7 @@ Adapt [the ticket template](../examples/ticket.json) before use. Schema 2 binds 
 
 Use the [context template](../examples/context.md) to distinguish fixed decisions from local implementation choices. Workers investigate and fix in-scope defects autonomously; unresolved contract changes return evidence and a recommendation in delivery blockers. Prefer coherent behavioral assignments and avoid duplicate context or unnecessary gate reruns.
 
-The default worker model is `deepseek-v4-pro`. CLI and API tickets may omit `execution.model`; preparation stores the resolved default. The Web form and ticket template use the same model. An explicitly supplied model is preserved.
+The default worker model is `deepseek-flash`. CLI and API tickets may omit `execution.model`; preparation stores the resolved default. The Web form and ticket template use the same model. An explicitly supplied model is preserved.
 
 The service continues execution after `run` returns. Schedule independent tasks within capacity while accounting for shared resources. A task cannot execute and verify concurrently. Use `wait` or `run/verify --wait` for bounded waiting; append `--brief` to return current review evidence instead of full status. A wait timeout does not cancel or resend work. After a timeout or lost connection, inspect state before deciding whether another action is appropriate.
 

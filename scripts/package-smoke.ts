@@ -120,8 +120,8 @@ try {
     "-e",
     'const m=await import("@dsh-worker/worker"); for(const key of ["Controller","SdkRuntime","WorkerClient"]) if(typeof m[key]!=="function") throw new Error(key);',
   ]);
-  // Remove only this disposable installation's native binding to reproduce
-  // --ignore-scripts without affecting the development checkout.
+  // Remove a required persistence dependency only in this disposable install.
+  // The diagnostic must preserve the actual missing module, not prescribe fs-ext.
   const sdk = createRequire(
     createRequire(entry).resolve("@deepseek-ai/dsh-sdk-client"),
   );
@@ -129,23 +129,22 @@ try {
   const persistence = createRequire(
     runtime.resolve("@deepseek-ai/dsh-session-persistence-jsonl"),
   );
-  const binding = join(
-    dirname(persistence.resolve("fs-ext")),
-    "build/Release/fs_ext.node",
+  const dependency = dirname(
+    persistence.resolve("@deepseek-ai/dsh-session-format-v2-to-v3"),
   );
-  renameSync(binding, binding + ".saved");
+  renameSync(dependency, dependency + ".saved");
   try {
     await assert.rejects(doctor(), (error: unknown) => {
       const failure = error as { code: number; stderr: string };
       assert.equal(failure.code, 1);
       const diagnostic = JSON.parse(failure.stderr);
       assert.equal(diagnostic.code, "runtime_dependencies");
-      assert.match(diagnostic.error, /fs_ext\.node/);
-      assert.match(diagnostic.error, /npm rebuild fs-ext/);
+      assert.match(diagnostic.error, /session-format-v2-to-v3/);
+      assert.doesNotMatch(diagnostic.error, /npm rebuild fs-ext/);
       return true;
     });
   } finally {
-    renameSync(binding + ".saved", binding);
+    renameSync(dependency + ".saved", dependency);
   }
   assert.equal(JSON.parse((await doctor()).stdout).initialized, true);
   passed = true;
@@ -154,7 +153,7 @@ try {
       installedDoctorRuns: 5,
       codingToolsComposition: "passed",
       optionalPluginsComposition: "passed",
-      missingNativeDiagnostic: "passed",
+      missingPersistenceDependencyDiagnostic: "passed",
       publicExports: "passed",
       modelCalls: 0,
     }),

@@ -199,7 +199,7 @@ async function setup() {
     },
   };
 }
-it.each([undefined, "deepseek-v4-flash"])(
+it.each([undefined, "custom-model"])(
   "prepares and dispatches the default or explicit worker model (%s)",
   async (model) => {
     const s = await setup();
@@ -208,7 +208,7 @@ it.each([undefined, "deepseek-v4-flash"])(
         ...s.ticket,
         execution: { ...s.ticket.execution, model },
       };
-      const expected = model ?? "deepseek-v4-pro";
+      const expected = model ?? "deepseek-flash";
       const prepared = await s.cli(["prepare", "--file", "-"], input);
       expect(prepared.code, prepared.stderr).toBe(0);
       expect(prepared.value.ticket.execution.model).toBe(expected);

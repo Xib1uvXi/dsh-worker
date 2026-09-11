@@ -29,7 +29,7 @@ export const commandSchema = z
 export const runtimeSchema = z
   .object({
     provider: text,
-    model: text.default("deepseek-v4-pro"),
+    model: text.default("deepseek-flash"),
     reasoningEffort: text.optional(),
     maxTokens: z.number().int().positive().optional(),
     timeoutSeconds: z.number().int().min(1).max(86400).default(1800),

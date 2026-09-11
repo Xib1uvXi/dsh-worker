@@ -49,19 +49,18 @@ Suggestions returned by `diagnose` are argument arrays to inspect and use delibe
 
 ## Missing native runtime dependencies
 
-`doctor` reports `runtime_dependencies` when the installed Harness persistence module cannot load. A missing `fs_ext.node` commonly means installation skipped lifecycle scripts; the upstream launcher may otherwise obscure this failure as `cannot create effect on inactive context` while rolling back plugin loading.
+`doctor` reports `runtime_dependencies` when the installed Harness persistence module cannot load. Read the underlying module error first: a missing package requires reinstalling dependencies; a missing or incompatible native binding requires repairing that dependency for the current Node/platform combination. Harness 0.1.5 uses `koffi` and `@deepseek-ai/node-addon-system` for persistence, not `fs-ext`.
 
-From the npm installation directory, with the required native build tools available and the package's script permitted by your npm policy, run:
+From the npm installation directory, use `npm ci` for a source checkout with its lockfile, or reinstall the installed worker package. If the error identifies a native dependency whose lifecycle scripts were skipped, permit that dependency's scripts under your npm policy and run `npm rebuild <package>` with its actual package name. Native compilation may require platform build tools. Then run the doctor command appropriate to your installation:
 
 ```sh
-npm rebuild fs-ext
 # Source checkout:
 node dist/cli.js doctor
 # Installed package:
 npx dsh-worker doctor
 ```
 
-Use the doctor command appropriate to your installation. [npm rebuild](https://docs.npmjs.com/cli/v11/commands/npm-rebuild/) reruns dependency lifecycle scripts; it cannot repair a missing compiler or a policy that still prevents those scripts. Doctor reports the underlying module error and does not install dependencies or change npm policy itself.
+[npm rebuild](https://docs.npmjs.com/cli/v11/commands/npm-rebuild/) reruns dependency lifecycle scripts; it cannot repair a missing compiler or a policy that still prevents those scripts. Doctor reports the underlying module error and does not install dependencies or change npm policy itself.
 
 ## Legacy converted worktrees
 

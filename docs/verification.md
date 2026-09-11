@@ -8,9 +8,28 @@ Use current command results for current changes. Recorded runs describe their me
 - `npm run format:check`: source formatting. `git diff --check`: whitespace consistency.
 - `node dist/cli.js doctor --home DIR`: released runtime initialization/close, with zero model calls.
 - Package consumption: install a locally packed tarball into an isolated directory and check public imports, declarations and CLI help.
-- `npm run test:package`: build and install a fresh tarball with normal npm lifecycle scripts, check public exports, run the real doctor three times, and verify the diagnostic for a missing native binding. Append `-- --offline` when the npm cache is populated.
+- `npm run test:package`: build and install a fresh tarball with normal npm lifecycle scripts, check public exports, run five successful real doctor checks, and verify the diagnostic for a missing persistence dependency. Append `-- --offline` when the npm cache is populated.
 
 Deterministic SDK fixtures are not provider/model execution. A skipped browser or unavailable runtime check is not a pass. Linux needs its own host evidence; the recorded platform is Node 24.18.0 / macOS arm64. Desktop is the browser acceptance target.
+
+## Harness 0.1.5 compatibility
+
+On 2026-09-11, the upgrade batch based on `64421ef055b9a69cfa024554ef79feabf1c7e097` pinned the Harness package family to `0.1.5-rc.2`. Validation used Node 24.18.0 on macOS arm64 in an isolated checkout.
+
+- `npm run lint`, `npm run typecheck`, and `npm test -- --maxWorkers=1` passed: the test command rebuilt the distributable and ran **185 tests in 21 files**, including desktop Chromium, actual TypeScript/Go/Rust LSP, SDK lifecycle, cancellation and process cleanup. The complete suite ran serially after parallel execution exposed host-contention timeouts and a test's exact-zero elapsed-time assumption; no timeout limits or test cases were removed.
+- The actual `0.1.3-alpha.2` compressed V2 fixture resumed through the current worker adapter and real released runtime. Both prior context and the new answer reached the deterministic provider, a V3 artifact was published, and the original source and copied V2 artifact stayed byte-identical. Malformed V2 input failed before a provider prompt and published no V3 successor. These migration tests make no network model calls.
+- `npx tsx scripts/package-smoke.ts` passed a fresh tarball installation, five successful doctor checks, coding/optional-plugin composition, public exports, and a missing persistence-dependency diagnostic followed by recovery. Lint, type checking and build were repeated after the package test's fault injection was updated for the new dependency layout. The unchanged runtime-suite results above remain applicable. Doctor model calls: **0**.
+- A separate actual DeepSeek official `deepseek-v4-pro` task changed one file in a disposable repository in **one attempt**, reached `awaiting_review` with a receipt, and passed controller verification. The owned runtime processes exited and the test controller closed. This is a real provider smoke check, not an acceptance decision or a load test.
+- Source formatting, changed Markdown links and whitespace checks passed. The running service and primary checkout were not upgraded by these checks. Controller schema 2 and the explicit worker model selection remain unchanged; Linux support and activation require separate evidence.
+
+## Flash default follow-up
+
+On 2026-09-11, the same Harness upgrade batch changed the default worker model to `deepseek-flash`, as requested. This supersedes the earlier Pro default recorded below. CLI/API validation, the Web form, ticket template and operator instructions agree on the new default; explicitly supplied models remain unchanged.
+
+- `npm run lint`, `npm run typecheck`, and `npm test -- --maxWorkers=1` passed again: build/declarations and **185 tests in 21 files**. Coverage includes persisted CLI defaults, the model passed through the public SDK initialization RPC, explicit model overrides and the Chromium form default.
+- A fresh tarball installation passed all five doctor checks, coding/optional-plugin composition, public exports and the missing persistence-dependency diagnostic/recovery check. Doctor model calls: **0**.
+- A real DeepSeek official task omitted the model in its input and resolved to `deepseek-flash`. In **one attempt**, it changed the intended file, returned a receipt, reached `awaiting_review`, and passed controller verification. No owned runtime processes remained, and the disposable controller closed. This is a provider smoke check, not an acceptance decision or multimodal feature validation.
+- Source formatting and whitespace checks passed. Historical Pro verification and the genuine V2 fixture retain their original model provenance. The primary checkout and running service were not changed.
 
 ## Current acceptance
 
