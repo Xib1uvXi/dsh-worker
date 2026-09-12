@@ -183,6 +183,21 @@ export const instructionInputSchema = z
     instruction: text.max(32000),
   })
   .strict();
+export const cancellationGuardSchema = z
+  .object({
+    revision: z.number().int().positive(),
+    attemptId: id,
+    instructionIds: z
+      .array(id)
+      .min(1)
+      .max(100)
+      .refine(
+        (ids) => new Set(ids).size === ids.length,
+        "Instruction IDs must be unique",
+      ),
+  })
+  .strict();
+export type CancellationGuard = z.infer<typeof cancellationGuardSchema>;
 export const actionSchema = z.discriminatedUnion("action", [
   z
     .object({
@@ -202,7 +217,14 @@ export const actionSchema = z.discriminatedUnion("action", [
     })
     .strict(),
   z.object({ action: z.literal("prepare"), ticket: ticketSchema }).strict(),
-  ...(["run", "cancel", "verify"] as const).map((action) =>
+  z
+    .object({
+      action: z.literal("cancel"),
+      ticketId: id,
+      ifUnconsumed: cancellationGuardSchema.optional(),
+    })
+    .strict(),
+  ...(["run", "verify"] as const).map((action) =>
     z.object({ action: z.literal(action), ticketId: id }).strict(),
   ),
   z.object({ action: z.literal("review"), review: reviewSchema }).strict(),

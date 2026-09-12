@@ -9,10 +9,12 @@ import type {
   Verification,
   VerificationBaseline,
   CommandRun,
+  CancellationGuard,
   Command,
 } from "../../contracts/src/index.js";
 import {
   actionSchema,
+  cancellationGuardSchema,
   boundDelivery,
   ticketSchema,
   reviewSchema,
@@ -242,7 +244,7 @@ export class Controller {
       case "run":
         return this.run(command.ticketId);
       case "cancel":
-        return this.cancel(command.ticketId);
+        return this.cancel(command.ticketId, command.ifUnconsumed);
       case "verify":
         return this.verify(command.ticketId);
       case "review":
@@ -1092,8 +1094,43 @@ export class Controller {
     signal.throwIfAborted();
     return true;
   }
-  async cancel(id: string) {
+  async cancel(id: string, condition?: CancellationGuard) {
+    const guard =
+      condition === undefined
+        ? undefined
+        : cancellationGuardSchema.parse(condition);
     const active = this.operations.get(id);
+    if (guard) {
+      const r = this.store.get(id, false);
+      const attempt = r.attempts.at(-1);
+      ensure(
+        active &&
+          !active.abort.signal.aborted &&
+          r.state === "running" &&
+          r.ticket.revision === guard.revision &&
+          attempt?.id === guard.attemptId &&
+          attempt.revision === guard.revision &&
+          r.activeOperation === attempt.id &&
+          !attempt.endedAt &&
+          guard.instructionIds.every((instructionId) => {
+            const instruction = r.instructions?.find(
+              (i) => i.id === instructionId,
+            );
+            return (
+              instruction?.revision === guard.revision &&
+              instruction.attemptId === guard.attemptId &&
+              instruction.status === "received" &&
+              !!instruction.messageId &&
+              !instruction.consumption
+            );
+          }),
+        "cancellation_precondition_failed",
+        "Cancellation refused: the bound execution or instruction evidence changed or is uncertain. Refresh the brief and reassess; do not retry unconditionally.",
+      );
+      // Persist the decision before aborting, without yielding between the check and abort.
+      // This checks controller-observed consumption; an unobserved native event may still be in transit.
+      this.store.event(id, "cancellation.requested", { ifUnconsumed: guard });
+    }
     ensure(
       active,
       "not_running",

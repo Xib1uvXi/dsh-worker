@@ -43,9 +43,9 @@ dsh-worker instruct TASK-01 --instruction-file instruction.txt --revision 1 --in
 
 The text file is sent as UTF-8. Alternatively, use `instruct ID --file instruction.json` with `{"revision":1,"instructionId":"TASK-01-note-1","instruction":"Additional implementation guidance"}`. All `--file -` options read JSON from stdin; `--instruction-file -` reads plain text. Files or stdin preserve literal text without shell interpolation.
 
-Instructions for a ready task queue for that revision's next attempt; running tasks receive them through the native Harness inbox. Keep a stable instruction ID: identical retries are deduplicated, but different content cannot reuse an ID. `queued` means pending, `sending` means awaiting a receipt, and `received` proves queue receipt only. Inspect `uncertain` deliveries and the CLI or Web trajectory before taking further action; never resend automatically. Scope or acceptance changes need a new revision; queued instructions do not silently transfer across revisions.
+Instructions for a ready task queue for that revision's next attempt; running tasks enqueue them for the current attempt's next conversation turn through the native Harness inbox. This does not interrupt the current tool step. Keep a stable instruction ID: identical retries are deduplicated, but different content cannot reuse an ID. `queued` means pending, `sending` means awaiting a receipt, and `received` proves queue receipt only. Inspect `uncertain` deliveries and the CLI or Web trajectory before taking further action; never resend automatically. Scope or acceptance changes need a new revision; queued instructions do not silently transfer across revisions.
 
-Inspect `consumption` separately from receipt. It records native message entry, not completion. `brief` shows unconsumed instruction age and the execution deadline. Group related corrections before sending; avoid scheduling a full verification cycle for every small follow-up. For a demonstrated wrong direction, explicitly cancel and recover a preserved snapshot with consolidated guidance. Do not assume inbox admission interrupts the current turn. Keep shared behavior interfaces and test resources stable before dispatching their parallel consumers; see [the correction loop](../docs/orchestration.md#close-the-correction-loop).
+Inspect `consumption` separately from receipt. It records native message entry, not completion. `brief` shows unconsumed instruction age and the execution deadline. Group related corrections before sending; avoid scheduling a full verification cycle for every small follow-up. For a demonstrated wrong direction, decide whether to wait or cancel and recover a preserved snapshot with consolidated guidance. When cancellation depends on feedback still being unconsumed, use the bound guard below; a failed guard requires fresh evidence and reassessment, never an unconditional retry. The guard checks recorded consumption, so native events still in transit remain a limitation. Do not assume inbox admission interrupts the current turn. Keep shared behavior interfaces and test resources stable before dispatching their parallel consumers; see [the correction loop](../docs/orchestration.md#close-the-correction-loop).
 
 ## Diagnose and inspect
 
@@ -58,6 +58,9 @@ Use `health` for service connectivity, process identity and workflow configurati
 ```sh
 dsh-worker verify TASK-01 --wait --home /path/to/controller
 dsh-worker review --file review.json --home /path/to/controller
+# Cancel because specific received feedback still has no recorded consumption:
+dsh-worker cancel TASK-01 --revision 1 --attempt ATTEMPT_ID --if-unconsumed TASK-01-note-1 --home /path/to/controller
+# General manual stop, independently justified by the host:
 dsh-worker cancel TASK-01 --home /path/to/controller
 dsh-worker recover TASK-01 --home /path/to/controller
 dsh-worker recover --file continuation.json --home /path/to/controller

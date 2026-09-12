@@ -18,6 +18,7 @@ import { cleanEnv, identity } from "../../shared/src/process.js";
 import { atomic, ensure, uid } from "../../shared/src/util.js";
 import {
   actionSchema,
+  cancellationGuardSchema,
   id,
   instructionInputSchema,
   evidenceQuerySchema,
@@ -55,6 +56,7 @@ async function main() {
       revision: { type: "string" },
       "instruction-id": { type: "string" },
       "instruction-file": { type: "string" },
+      "if-unconsumed": { type: "string", multiple: true },
       output: { type: "string" },
       attempt: { type: "string" },
       after: { type: "string" },
@@ -71,6 +73,31 @@ async function main() {
     },
   });
   const command = positionals[0] ?? "help";
+  ensure(
+    values["if-unconsumed"] === undefined || command === "cancel",
+    "arguments",
+    "--if-unconsumed is only supported by cancel",
+  );
+  let cancellationGuard;
+  if (
+    command === "cancel" &&
+    (values.revision !== undefined ||
+      values.attempt !== undefined ||
+      values["if-unconsumed"] !== undefined)
+  ) {
+    ensure(
+      values.revision !== undefined &&
+        values.attempt !== undefined &&
+        values["if-unconsumed"] !== undefined,
+      "arguments",
+      "Guarded cancel requires --revision, --attempt and --if-unconsumed together",
+    );
+    cancellationGuard = cancellationGuardSchema.parse({
+      revision: Number(values.revision),
+      attemptId: values.attempt,
+      instructionIds: values["if-unconsumed"],
+    });
+  }
   const home = resolve(
     values.home ??
       process.env.DSH_WORKER_HOME ??
@@ -78,7 +105,7 @@ async function main() {
   );
   if (command === "help" || values.help) {
     console.log(
-      `dsh-worker 0.2 — CLI + Skill control service\n\nserve [--port 4317] [--capacity 2] [--enable-dispatch]\nlist [--summary] | status ID [--summary] | prepare --file ticket.json\nrun ID [--wait [--brief]] | cancel ID | verify ID [--wait [--brief]]\nwait ID [--timeout SECONDS] [--brief]\nreview --file review.json | recover ID | recover --file continuation.json\ninstruct ID --file instruction.json\ninstruct ID --instruction-file message.txt --revision N --instruction-id KEY\narchive ID | restore ID\nartifact SHA256 --output FILE\nhealth | diagnose ID | errors ID [--attempt ATTEMPT_ID] [--full]\nbrief ID [ID ...] (up to 8)\nversion | validate delivery|review --file FILE [--ticket-file FILE --attempt ID]\ntrajectory ID [--after N] [--limit 100] [--attempt ID] [--kind EVENT] [--full]\nactivity ID [--attempt ID] | events ID [--after N] [--limit 100]\nsessions | doctor [--repo PATH] | skill | workflow\ntools [--repo PATH] | tools install\nprune [--days 7] (old clean Harness homes only; evidence retained)\n\nAll commands accept --home DIR; data commands print JSON (--json is optional).\n--file - reads JSON from stdin. Instruction files contain UTF-8 text.\nReuse the same instruction ID for retries; uncertain delivery is never replayed.\n--wait/ wait defaults to a 3600-second timeout; timing out does not cancel work.\nStart the service once, then use the bundled skill/SKILL.md for orchestration.\nModel dispatch is off until explicitly enabled on serve.`,
+      `dsh-worker 0.2 — CLI + Skill control service\n\nserve [--port 4317] [--capacity 2] [--enable-dispatch]\nlist [--summary] | status ID [--summary] | prepare --file ticket.json\nrun ID [--wait [--brief]] | cancel ID | verify ID [--wait [--brief]]\ncancel ID --revision N --attempt ATTEMPT_ID --if-unconsumed INSTRUCTION_ID (repeatable)\nwait ID [--timeout SECONDS] [--brief]\nreview --file review.json | recover ID | recover --file continuation.json\ninstruct ID --file instruction.json\ninstruct ID --instruction-file message.txt --revision N --instruction-id KEY\narchive ID | restore ID\nartifact SHA256 --output FILE\nhealth | diagnose ID | errors ID [--attempt ATTEMPT_ID] [--full]\nbrief ID [ID ...] (up to 8)\nversion | validate delivery|review --file FILE [--ticket-file FILE --attempt ID]\ntrajectory ID [--after N] [--limit 100] [--attempt ID] [--kind EVENT] [--full]\nactivity ID [--attempt ID] | events ID [--after N] [--limit 100]\nsessions | doctor [--repo PATH] | skill | workflow\ntools [--repo PATH] | tools install\nprune [--days 7] (old clean Harness homes only; evidence retained)\n\nAll commands accept --home DIR; data commands print JSON (--json is optional).\n--file - reads JSON from stdin. Instruction files contain UTF-8 text.\nRunning instructions enter the next conversation turn; they do not interrupt the current tool step.\nGuarded cancel requires every bound instruction to have a receipt and no recorded consumption.\nReuse the same instruction ID for retries; uncertain delivery is never replayed.\n--wait/ wait defaults to a 3600-second timeout; timing out does not cancel work.\nStart the service once, then use the bundled skill/SKILL.md for orchestration.\nModel dispatch is off until explicitly enabled on serve.`,
     );
     return;
   }
@@ -207,9 +234,11 @@ async function main() {
     "--summary is only supported by list and status",
   );
   ensure(
-    !values.attempt || ["errors", "trajectory", "activity"].includes(command),
+    !values.attempt ||
+      !!cancellationGuard ||
+      ["errors", "trajectory", "activity"].includes(command),
     "arguments",
-    "--attempt is only supported by errors, trajectory and activity",
+    "--attempt is only supported by errors, trajectory, activity and guarded cancel",
   );
   ensure(
     !values.full || ["errors", "trajectory"].includes(command),
@@ -493,32 +522,38 @@ async function main() {
         "Provide --file JSON or --instruction-file TEXT with --revision and --instruction-id",
       );
     const raw =
-      command === "instruct"
+      command === "cancel"
         ? {
-            ...(values.file
-              ? instructionInputSchema.parse(read())
-              : {
-                  instruction: readFileSync(
-                    values["instruction-file"] === "-"
-                      ? 0
-                      : resolve(values["instruction-file"] ?? ""),
-                    "utf8",
-                  ),
-                  revision: Number(values.revision),
-                  instructionId: values["instruction-id"],
-                }),
-            action: "instruct",
+            action: "cancel",
             ticketId,
+            ...(cancellationGuard ? { ifUnconsumed: cancellationGuard } : {}),
           }
-        : command === "archive" || command === "restore"
-          ? { action: "archive", ticketId, archived: command === "archive" }
-          : command === "prepare"
-            ? { action: command, ticket: read() }
-            : command === "review"
-              ? { action: command, review: read() }
-              : command === "recover"
-                ? { action: command, continuation: read() }
-                : { action: command, ticketId };
+        : command === "instruct"
+          ? {
+              ...(values.file
+                ? instructionInputSchema.parse(read())
+                : {
+                    instruction: readFileSync(
+                      values["instruction-file"] === "-"
+                        ? 0
+                        : resolve(values["instruction-file"] ?? ""),
+                      "utf8",
+                    ),
+                    revision: Number(values.revision),
+                    instructionId: values["instruction-id"],
+                  }),
+              action: "instruct",
+              ticketId,
+            }
+          : command === "archive" || command === "restore"
+            ? { action: "archive", ticketId, archived: command === "archive" }
+            : command === "prepare"
+              ? { action: command, ticket: read() }
+              : command === "review"
+                ? { action: command, review: read() }
+                : command === "recover"
+                  ? { action: command, continuation: read() }
+                  : { action: command, ticketId };
     const action = actionSchema.parse(raw);
     result = await client.action(action);
     if (

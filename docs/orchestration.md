@@ -35,7 +35,19 @@ An instruction's `received` state means admission to the native inbox. Its optio
 
 `brief` and `status --summary` expose instruction age and `execution.deadlineAt`/`remainingSeconds`. The deadline starts after setup and is shared with the runtime watchdog; subsequent prompts do not extend it. The Web shows the same deadline and waiting instructions. These observations never resend instructions or extend execution automatically.
 
-Native prompts may wait for the next turn. Group related observations into one coherent instruction before sending instead of creating a separate full verification cycle per small observation. Preserve stable instruction IDs. Do not replace or replay a previously sent uncertain message. If a demonstrated error makes continued work wasteful, explicitly cancel, inspect ownership and snapshot, and recover with consolidated guidance. A normal observation is not a reason to repeatedly interrupt a productive worker.
+The current Harness SDK routes running instructions to the next conversation turn (`next-turn`), not the next tool step. Group related observations into one coherent instruction before sending instead of creating a separate full verification cycle per small observation. Preserve stable instruction IDs. Do not replace or replay a previously sent uncertain message. If a demonstrated error makes continued work wasteful, explicitly cancel, inspect ownership and snapshot, and recover with consolidated guidance. A normal observation is not a reason to repeatedly interrupt a productive worker.
+
+If the cancellation reason depends on feedback still being unconsumed, bind that premise to the inspected revision, attempt and instruction IDs:
+
+```sh
+dsh-worker cancel TASK-01 --revision 1 --attempt ATTEMPT_ID --if-unconsumed TASK-01-note-1 --if-unconsumed TASK-01-note-2
+```
+
+All three options are required together; repeat `--if-unconsumed` for every instruction on which the decision depends. The service checks them immediately before aborting, without an asynchronous gap. It requires a live execution of that exact revision/attempt and a reliable receipt with no recorded consumption for every bound instruction. Consumed, missing, uncertain or mismatched instructions reject the entire action with `cancellation_precondition_failed` (HTTP 409), without cancellation or a state change. Refresh the evidence and reassess the reason; do not fall back to an unconditional retry. A guard rejection does not prove implementation correctness.
+
+The check covers durable controller observations, not a native consumption event still in transit. A passing guard records `cancellation.requested` with its binding before aborting. It does not guarantee that no native work occurs during cleanup. General manual `cancel ID` remains available for an independent stop reason and still applies to execution, verification or recovery. A consumed instruction can coexist with a demonstrated defect; reassess that defect on current evidence instead of reusing the obsolete unconsumed premise.
+
+The HTTP action is `{"action":"cancel","ticketId":"TASK-01","ifUnconsumed":{"revision":1,"attemptId":"ATTEMPT_ID","instructionIds":["TASK-01-note-1"]}}`. Older clients/services do not support this guard; check `version` and `health` and update them together. Never remove the guard merely because an old service rejects the field.
 
 During correction, run discriminating focused checks. Once known corrections settle, run the complete batch gates on the final snapshot. Retain original command output and exit codes to extract counts later; do not rerun tests only to count or format results. Shell pipelines using `tail`, `grep` or `awk` must preserve the tested command's failure status. The controller's actual verification remains required.
 

@@ -42,6 +42,7 @@ Use `validate delivery|review --file FILE` for local format checks. For a frozen
 - **`outcome: "unknown"`**: A mutation request lost its response or timed out. It might already have taken effect. Inspect `status`, `errors` and the Web before deciding the next action. No automatic retry occurs.
 - **Interrupted/blocked task**: Read `errors`, then `recover ID` to inspect the exact attempt/snapshot/processes. Prepare an explicit continuation only after resolving the cause; recovery does not dispatch.
 - **Failed verification**: Inspect command output. Correct the substantiated defect through external review/rework rather than recording acceptance from the Worker summary.
+- **`cancellation_precondition_failed`**: The guarded cancellation no longer matches a live execution with every bound instruction received and unconsumed. No cancellation occurred. Refresh the brief and reassess; do not retry without the guard. See [the correction loop](orchestration.md#close-the-correction-loop).
 - **Uncertain instruction**: Check `trajectory ID --attempt ATTEMPT_ID` or the Web and the receipt state. Do not resend automatically or manufacture a fresh instruction ID as a retry workaround.
 - **Accepted but stale**: The checkout changed after acceptance. Do not treat the old accepted snapshot as approval for the new content.
 

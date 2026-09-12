@@ -416,7 +416,10 @@ it("desktop natural-language entry, live agent trajectory, revision editing and 
       .getByLabel("追加自然语言指令", { exact: true })
       .fill("Now finish the implementation.");
     await page
-      .getByRole("button", { name: "发送到当前执行", exact: true })
+      .getByText("追加指令会在当前执行的下一回合处理", { exact: false })
+      .waitFor();
+    await page
+      .getByRole("button", { name: "加入下一回合", exact: true })
       .click();
     await page.getByText("等待外部审查与验收", { exact: true }).waitFor();
     await page.getByLabel("轨迹类型", { exact: true }).selectOption("tool/");

@@ -29,6 +29,8 @@ The host remains active as the decision owner while work runs. Inspect actual di
 
 Group known related defects and their acceptance links before sending one coherent correction. Track receipt, native consumption, implementation and verification separately. If queued guidance would change the work or invalidate an expensive test cycle already underway, assess the remaining time and cleanup cost and choose deliberately between waiting and cancelling. Do not use a fixed polling count or automatic timeout as a substitute for that judgment. Unknown receipt or consumption is never permission to replay a send.
 
+The current SDK queues running feedback for the next conversation turn, not the next tool step. If a stop depends on feedback remaining unconsumed, use `cancel ID --revision N --attempt ATTEMPT_ID --if-unconsumed INSTRUCTION_ID`, repeating the final option for all relevant instructions. The service checks recorded evidence immediately before aborting. If any binding is stale, consumption is recorded or receipt is uncertain, refresh and reassess; never downgrade a rejected guard to an unconditional retry. An independent stop reason may still justify ordinary manual cancellation. Native events still in transit remain outside this check; consumption never proves that the requested repair was implemented.
+
 After a controlled stop, inspect process ownership and the preserved snapshot. Account for already sent or uncertain instructions, then use the supported recovery path with consolidated context; do not silently reissue their IDs as new sends. Contract changes require the appropriate revision, not a live instruction. A successful turn, consumed message or report-only recovery does not close a defect.
 
 Before calling a verification run final, reconcile known original defects against their actual fixes and focused evidence. Do not repeatedly ask for the whole batch gate while already known blocking corrections remain queued. Run the required complete gates once those corrections settle; real subsequent changes or failures can justify reruns. Keep original output and failure status, and use it for counts. This does not prohibit a worker from testing its implementation or substitute for controller verification.
@@ -47,6 +49,7 @@ Exercise these decisions with concrete inputs, not keyword-presence checks:
 
 - Two disjoint file assignments share an unfinished guarded-write interface: resolve the interface or hold dependent dispatch, while allowing unrelated work.
 - A component passes tests but defers an explicit acceptance item: keep it unaccepted or revise the partition with preserved parent obligations and fresh bindings.
+- A cancellation decision assumed unconsumed feedback, but consumption appears before the action: the guard refuses, the execution continues, and the host reassesses against current work.
 - A worker received three corrections but is testing the old behavior: inspect consumption and choose a consolidated wait/stop/recovery action; never infer completion or blindly resend.
 - Accepted components conflict on a shared state: the host decides and applies the combination, then assigns only the necessary bounded repair and verifies affected behavior.
 - An isolated implementation has no unsettled interface or dependency: dispatch within existing authorization without inventing a design ceremony.

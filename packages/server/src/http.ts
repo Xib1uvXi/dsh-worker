@@ -288,9 +288,11 @@ export async function startHttp(
             ? 404
             : code === "host" || code === "origin"
               ? 403
-              : code === "internal"
-                ? 500
-                : 400;
+              : code === "cancellation_precondition_failed"
+                ? 409
+                : code === "internal"
+                  ? 500
+                  : 400;
       json(
         res,
         {

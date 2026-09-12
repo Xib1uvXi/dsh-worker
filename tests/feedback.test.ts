@@ -6,6 +6,10 @@ import type { RuntimeAdapter } from "../packages/runtime/src/adapter.js";
 import type { RunnerMessage } from "../packages/runtime/src/runner.js";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { startHttp } from "../packages/server/src/http.js";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
+import { resolve } from "node:path";
 import { instructionText } from "../packages/core/src/attempt-feedback.js";
 
 it("preserves a native error even when the runtime loses its final outcome", async () => {
@@ -188,6 +192,164 @@ it("separates receipt and consumption, fences sessions, and handles consumption 
     ).toBeNull();
   } finally {
     finish?.();
+    await c.close();
+  }
+}, 20000);
+
+it("rejects stale unconsumed cancellation decisions without interrupting execution", async () => {
+  const f = fixture();
+  let emit!: (id: string) => void;
+  let aborted = false;
+  const runtime: RuntimeAdapter = {
+    async execute(request, _dir, _marker, signal, notify) {
+      emit = (id) =>
+        notify({
+          type: "notification",
+          notification: {
+            method: "session.event",
+            params: {
+              sessionId: request.sessionId,
+              event: { type: "user/message", data: { id } },
+            },
+          },
+        } as RunnerMessage);
+      notify({
+        type: "notification",
+        notification: {
+          method: "session.event",
+          params: {
+            sessionId: request.sessionId,
+            event: {
+              type: "agent/inbox/spliced",
+              data: { inserted: [{ id: "initial" }] },
+            },
+          },
+        },
+      } as RunnerMessage);
+      await new Promise<void>((resolve) => {
+        signal.addEventListener(
+          "abort",
+          () => {
+            aborted = true;
+            resolve();
+          },
+          { once: true },
+        );
+      });
+      return { receipt: true, cleanExit: true, termination: "cancelled" };
+    },
+    async instruct(_attempt, id) {
+      if (id === "uncertain") throw new Error("Receipt unavailable");
+      return `native-${id}`;
+    },
+  };
+  const c = new Controller({ home: f.home, runtime, dispatchEnabled: true });
+  const http = await startHttp(c, {
+    port: 0,
+    token: "guard-test",
+    webDir: resolve("dist/web"),
+  });
+  writeFileSync(
+    join(f.home, "service.json"),
+    JSON.stringify({ url: http.url, token: "guard-test" }),
+  );
+  try {
+    c.prepare(f.ticket);
+    c.run(f.ticket.ticketId);
+    await expect.poll(() => !!emit, { timeout: 10000 }).toBe(true);
+    for (const instructionId of [
+      "consumed",
+      "pending",
+      "pending-two",
+      "uncertain",
+    ])
+      await c.action({
+        action: "instruct",
+        ticketId: f.ticket.ticketId,
+        revision: 1,
+        instructionId,
+        instruction: "Recheck the acceptance evidence",
+      });
+    const attemptId = c.status(f.ticket.ticketId).attempts.at(-1)!.id;
+    const guard = { revision: 1, attemptId, instructionIds: ["consumed"] };
+    // This is the recorded incident: consumption arrives after inspection but before cancellation.
+    emit("native-consumed");
+    const eventsBefore = c.store.events(0, 10000).length;
+    for (const ifUnconsumed of [
+      guard,
+      { ...guard, instructionIds: ["pending", "consumed"] },
+      { ...guard, instructionIds: ["missing"] },
+      { ...guard, instructionIds: ["uncertain"] },
+      { ...guard, instructionIds: ["pending"], revision: 2 },
+      { ...guard, instructionIds: ["pending"], attemptId: "stale-attempt" },
+    ]) {
+      await expect(
+        c.action({
+          action: "cancel",
+          ticketId: f.ticket.ticketId,
+          ifUnconsumed,
+        }),
+      ).rejects.toMatchObject({ code: "cancellation_precondition_failed" });
+      expect(aborted).toBe(false);
+      expect(c.status(f.ticket.ticketId).state).toBe("running");
+    }
+    expect(c.store.events(0, 10000)).toHaveLength(eventsBefore);
+    const conflict = await fetch(`${http.url}/api/actions`, {
+      method: "POST",
+      headers: {
+        Authorization: "Bearer guard-test",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        action: "cancel",
+        ticketId: f.ticket.ticketId,
+        ifUnconsumed: guard,
+      }),
+    });
+    expect(conflict.status).toBe(409);
+    expect(await conflict.json()).toMatchObject({
+      error: { code: "cancellation_precondition_failed" },
+    });
+    const args = [
+      resolve("dist/cli.js"),
+      "cancel",
+      f.ticket.ticketId,
+      "--home",
+      f.home,
+      "--revision",
+      "1",
+      "--attempt",
+      attemptId,
+      "--if-unconsumed",
+    ];
+    await expect(
+      promisify(execFile)(process.execPath, [...args, "consumed"]),
+    ).rejects.toMatchObject({
+      code: 1,
+      stderr: expect.stringContaining("cancellation_precondition_failed"),
+    });
+    expect(aborted).toBe(false);
+    const ifUnconsumed = {
+      ...guard,
+      instructionIds: ["pending", "pending-two"],
+    };
+    const cancelled = await promisify(execFile)(process.execPath, [
+      ...args,
+      "pending",
+      "--if-unconsumed",
+      "pending-two",
+    ]);
+    expect(JSON.parse(cancelled.stdout).state).toBe("interrupted");
+    expect(aborted).toBe(true);
+    expect(
+      c.store.events(0, 10000).find((e) => e.type === "cancellation.requested")
+        ?.data,
+    ).toMatchObject({ ifUnconsumed });
+    await expect(
+      c.cancel(f.ticket.ticketId, ifUnconsumed),
+    ).rejects.toMatchObject({ code: "cancellation_precondition_failed" });
+  } finally {
+    await http.close();
     await c.close();
   }
 }, 20000);

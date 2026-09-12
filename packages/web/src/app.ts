@@ -520,7 +520,7 @@ function renderDetail(t: TicketView) {
     el(
       "p",
       t.state === "running"
-        ? "发送到当前执行。回执只表示已进入 Harness 队列，实际执行以轨迹为准。"
+        ? "追加指令会在当前执行的下一回合处理，不会打断当前工具步骤。回执只表示入队，消费记录不代表理解、实现或验证通过。"
         : "追加到下一次执行；范围与验收的变化请使用编辑任务版本。",
       "subtle",
     ),
@@ -540,7 +540,7 @@ function renderDetail(t: TicketView) {
   composer.append(
     input,
     button(
-      t.state === "running" ? "发送到当前执行" : "保存执行指令",
+      t.state === "running" ? "加入下一回合" : "保存执行指令",
       async () => {
         const draft = instructionDrafts.get(draftKey) ?? {
           id: crypto.randomUUID(),
@@ -574,7 +574,7 @@ function renderDetail(t: TicketView) {
   const instructionStates = {
     queued: "等待下次执行",
     sending: "等待回执",
-    received: "Harness 已接收",
+    received: "已接收，未记录消费",
     uncertain: "回执不确定，请核对轨迹",
   };
   for (const i of t.instructions ?? [])

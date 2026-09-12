@@ -959,3 +959,45 @@ it("returns a bound brief after run or verify waiting and preserves full wait by
     await s.close();
   }
 }, 15000);
+
+it("refuses incomplete or misplaced cancellation guards before contacting a service", async () => {
+  const f = fixture();
+  for (const args of [
+    ["cancel", "TASK-01", "--revision", "1"],
+    ["cancel", "TASK-01", "--attempt", "a"],
+    ["cancel", "TASK-01", "--if-unconsumed", "i"],
+    ["cancel", "TASK-01", "--revision", "1", "--attempt", "a"],
+    [
+      "cancel",
+      "TASK-01",
+      "--revision",
+      "1",
+      "--attempt",
+      "a",
+      "--if-unconsumed",
+      "i",
+      "--if-unconsumed",
+      "i",
+    ],
+    [
+      "cancel",
+      "TASK-01",
+      "--revision",
+      "0",
+      "--attempt",
+      "a",
+      "--if-unconsumed",
+      "i",
+    ],
+    ["run", "TASK-01", "--if-unconsumed", "i"],
+    ["validate", "delivery", "--file", "-", "--if-unconsumed", "i"],
+    ["version", "--if-unconsumed", "i"],
+    ["serve", "--if-unconsumed", "i"],
+  ]) {
+    const result = await invoke(f.home, args);
+    expect(result.code, args.join(" ")).toBe(1);
+    expect(JSON.parse(result.stderr).code).toMatch(
+      /^(arguments|invalid_contract)$/,
+    );
+  }
+});
