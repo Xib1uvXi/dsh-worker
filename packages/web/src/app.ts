@@ -15,7 +15,9 @@ import type {
   JournalEvent,
   SessionSummary,
   TrajectoryPage,
+  ReviewStatus,
 } from "../../contracts/src/index.js";
+import { mountReviewManager } from "./review-manager.js";
 const $ = <T extends HTMLElement>(id: string) =>
   document.getElementById(id) as T;
 function el<K extends keyof HTMLElementTagNameMap>(
@@ -55,6 +57,49 @@ if (token) {
   localStorage.setItem("worker-token", token);
   sessionStorage.setItem("worker-token", token);
   history.replaceState(null, "", location.pathname);
+}
+const reviewRequestIds = new Map<string, string>();
+const scheduledRequestIds = new Map<string, string>();
+async function scheduleOperation(t: TicketView, kind: "run" | "verify") {
+  const key = `${t.ticket.ticketId}/${t.ticket.revision}/${t.attempts.at(-1)?.id ?? "new"}/${t.verifications.length}/${kind}`;
+  let requestId = scheduledRequestIds.get(key);
+  if (requestId) {
+    const status = await request<ReviewStatus>("/api/reviews");
+    const known = status.operations.find((o) => o.requestId === requestId);
+    if (known && ["cancelled", "failed"].includes(known.state))
+      requestId = undefined;
+  }
+  requestId ??= crypto.randomUUID();
+  scheduledRequestIds.set(key, requestId);
+  return controlReview({
+    action: "schedule",
+    kind,
+    requestId,
+    ticketId: t.ticket.ticketId,
+  });
+}
+async function controlReview(action: Action) {
+  const target = selected;
+  const selectedRequest = detailRequest;
+  const result = await request<unknown>("/api/actions", action);
+  await refresh();
+  if (
+    target &&
+    selected === target &&
+    selectedRequest === detailRequest &&
+    $<HTMLDialogElement>("detail").open
+  ) {
+    const current = await request<TicketView>(
+      `/api/tickets/${encodeURIComponent(target)}`,
+    );
+    if (
+      selected === target &&
+      selectedRequest === detailRequest &&
+      $<HTMLDialogElement>("detail").open
+    )
+      renderDetail(current);
+  }
+  return result;
 }
 let overview: Overview | undefined;
 let selected: string | undefined;
@@ -428,7 +473,7 @@ async function act(action: Action) {
   try {
     const data = await request<TicketView>("/api/actions", action);
     await refresh();
-    if (selected === data.ticket.ticketId) renderDetail(data);
+    if (selected === data.ticket?.ticketId) renderDetail(data);
     return data;
   } catch (error) {
     const existing = $("detail-error");
@@ -614,7 +659,10 @@ function renderDetail(t: TicketView) {
     actions.append(
       button(
         t.state === "ready" ? "开始实现" : "开始返工",
-        () => act({ action: "run", ticketId: t.ticket.ticketId }),
+        () =>
+          t.ticket.reviewPoolId
+            ? scheduleOperation(t, "run")
+            : act({ action: "run", ticketId: t.ticket.ticketId }),
         !overview?.dispatchEnabled || !!t.activeOperation || !!t.archived,
       ),
     );
@@ -628,10 +676,84 @@ function renderDetail(t: TicketView) {
     actions.append(
       button(
         "运行独立验证",
-        () => act({ action: "verify", ticketId: t.ticket.ticketId }),
+        () =>
+          t.ticket.reviewPoolId
+            ? scheduleOperation(t, "verify")
+            : act({ action: "verify", ticketId: t.ticket.ticketId }),
         !!t.activeOperation,
       ),
     );
+  if (t.ticket.reviewPolicy === "worker_then_astra") {
+    body.append(
+      el(
+        "p",
+        `独立审查池：${t.ticket.reviewPoolId}；票级接受不代表最终集成验收。`,
+        "subtle",
+      ),
+    );
+    if (t.state === "awaiting_review" && !t.activeOperation) {
+      const attempt = t.attempts.at(-1)!;
+      const key = `${t.ticket.ticketId}:${attempt.id}:${attempt.snapshot?.digest}`;
+      let known: ReviewStatus["runs"][number] | undefined;
+      const requestButton = button("正在读取审查状态", () => {
+        let requestId = reviewRequestIds.get(key);
+        // A deliberate new request is allowed only after observing a released terminal run.
+        // Preserve a different cached ID when the latest mutation response was lost.
+        if (
+          known &&
+          !known.slotHeld &&
+          !["queued", "running"].includes(known.state) &&
+          requestId === known.request.requestId
+        )
+          requestId = undefined;
+        requestId ??= crypto.randomUUID();
+        reviewRequestIds.set(key, requestId);
+        return controlReview({
+          action: "request-review",
+          request: {
+            requestId,
+            poolId: t.ticket.reviewPoolId!,
+            ticketId: t.ticket.ticketId,
+            revision: t.ticket.revision,
+            attemptId: attempt.id,
+            snapshotDigest: attempt.snapshot!.digest,
+            mode: "initial",
+          },
+        });
+      });
+      requestButton.disabled = true;
+      actions.append(requestButton);
+      void request<ReviewStatus>("/api/reviews")
+        .then((status) => {
+          if (!requestButton.isConnected) return;
+          known = status.runs
+            .filter(
+              (r) =>
+                r.request.ticketId === t.ticket.ticketId &&
+                r.request.revision === t.ticket.revision &&
+                r.request.attemptId === attempt.id &&
+                r.request.snapshotDigest === attempt.snapshot?.digest,
+            )
+            .sort((a, b) => a.sequence - b.sequence)
+            .at(-1);
+          if (known && !reviewRequestIds.has(key))
+            reviewRequestIds.set(key, known.request.requestId);
+          const busy =
+            !!known &&
+            (known.slotHeld || ["queued", "running"].includes(known.state));
+          requestButton.textContent = busy
+            ? "独立审查已排队或执行中"
+            : known
+              ? "重新请求独立审查"
+              : "请求独立审查";
+          requestButton.disabled = busy;
+        })
+        .catch((error) => {
+          if (requestButton.isConnected)
+            $("detail-error").textContent = String(error);
+        });
+    }
+  }
   body.insertBefore(actions, management);
   if (t.state === "awaiting_review" && !t.activeOperation) {
     const form = el("div", undefined, "review-form");
@@ -663,6 +785,45 @@ function renderDetail(t: TicketView) {
       new Option("Standards · 不通过", "fail"),
     );
     form.append(spec, standards);
+    const source = el("select");
+    source.setAttribute("aria-label", "独立审查来源");
+    source.append(new Option("选择当前快照的独立审查报告", ""));
+    const dispositions = el("textarea");
+    dispositions.setAttribute("aria-label", "发现裁决 JSON");
+    dispositions.placeholder =
+      '可选：[{"findingId":"F1","evidence":"驳回依据"}]';
+    if (t.ticket.reviewPolicy === "worker_then_astra") {
+      form.append(source, dispositions);
+      void request<ReviewStatus>("/api/reviews")
+        .then((status) => {
+          if (!form.isConnected) return;
+          for (const run of status.runs.filter(
+            (r) =>
+              r.request.ticketId === t.ticket.ticketId &&
+              r.request.attemptId === t.attempts.at(-1)?.id &&
+              r.request.snapshotDigest ===
+                t.attempts.at(-1)?.snapshot?.digest &&
+              r.state === "completed" &&
+              !r.slotHeld,
+          )) {
+            source.append(
+              new Option(
+                `${run.id} · ${run.report?.recommendation}`,
+                `${run.id}:${run.reportDigest}`,
+              ),
+            );
+            form.append(
+              disclosure(
+                `独立报告 · ${run.report?.recommendation}`,
+                JSON.stringify(run.report, null, 2),
+              ),
+            );
+          }
+        })
+        .catch((error) => {
+          $("detail-error").textContent = String(error);
+        });
+    }
     const reviewActions = el("div", undefined, "actions");
     for (const [label, verdict] of [
       ["验收通过", "accept"],
@@ -672,6 +833,12 @@ function renderDetail(t: TicketView) {
       reviewActions.append(
         button(label, async () => {
           const attempt = t.attempts.at(-1)!;
+          if (
+            t.ticket.reviewPolicy === "worker_then_astra" &&
+            verdict === "accept" &&
+            !source.value
+          )
+            throw new Error("验收前请选择当前快照的独立审查报告");
           const review: Review = {
             schemaVersion: 2,
             ticketId: t.ticket.ticketId,
@@ -679,6 +846,17 @@ function renderDetail(t: TicketView) {
             attemptId: attempt.id,
             snapshotDigest: attempt.snapshot!.digest,
             reviewer: reviewer.value,
+            ...(t.ticket.reviewPolicy === "worker_then_astra" && source.value
+              ? {
+                  source: {
+                    runId: source.value.split(":")[0] ?? "",
+                    reportDigest: source.value.split(":")[1] ?? "",
+                  },
+                  dispositions: dispositions.value.trim()
+                    ? JSON.parse(dispositions.value)
+                    : [],
+                }
+              : {}),
             spec: { verdict: spec.value as "pass" | "fail", findings: [] },
             standards: {
               verdict: standards.value as "pass" | "fail",
@@ -1057,3 +1235,5 @@ for (const kind of ["list", "board"])
     localStorage.setItem("worker-layout", kind);
     render();
   };
+
+mountReviewManager({ request, onChange: refresh });

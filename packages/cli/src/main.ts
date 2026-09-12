@@ -46,6 +46,7 @@ async function main() {
     allowPositionals: true,
     options: {
       days: { type: "string" },
+      "request-id": { type: "string" },
       repo: { type: "string" },
       home: { type: "string" },
       port: { type: "string" },
@@ -105,7 +106,7 @@ async function main() {
   );
   if (command === "help" || values.help) {
     console.log(
-      `dsh-worker 0.2 — CLI + Skill control service\n\nserve [--port 4317] [--capacity 2] [--enable-dispatch]\nlist [--summary] | status ID [--summary] | prepare --file ticket.json\nrun ID [--wait [--brief]] | cancel ID | verify ID [--wait [--brief]]\ncancel ID --revision N --attempt ATTEMPT_ID --if-unconsumed INSTRUCTION_ID (repeatable)\nwait ID [--timeout SECONDS] [--brief]\nreview --file review.json | recover ID | recover --file continuation.json\ninstruct ID --file instruction.json\ninstruct ID --instruction-file message.txt --revision N --instruction-id KEY\narchive ID | restore ID\nartifact SHA256 --output FILE\nhealth | diagnose ID | errors ID [--attempt ATTEMPT_ID] [--full]\nbrief ID [ID ...] (up to 8)\nversion | validate delivery|review --file FILE [--ticket-file FILE --attempt ID]\ntrajectory ID [--after N] [--limit 100] [--attempt ID] [--kind EVENT] [--full]\nactivity ID [--attempt ID] | events ID [--after N] [--limit 100]\nsessions | doctor [--repo PATH] | skill | workflow\ntools [--repo PATH] | tools install\nprune [--days 7] (old clean Harness homes only; evidence retained)\n\nAll commands accept --home DIR; data commands print JSON (--json is optional).\n--file - reads JSON from stdin. Instruction files contain UTF-8 text.\nRunning instructions enter the next conversation turn; they do not interrupt the current tool step.\nGuarded cancel requires every bound instruction to have a receipt and no recorded consumption.\nReuse the same instruction ID for retries; uncertain delivery is never replayed.\n--wait/ wait defaults to a 3600-second timeout; timing out does not cancel work.\nStart the service once, then use the bundled skill/SKILL.md for orchestration.\nModel dispatch is off until explicitly enabled on serve.`,
+      `dsh-worker 0.2 — CLI + Skill control service\n\nserve [--port 4317] [--capacity 2] [--enable-dispatch]\nlist [--summary] | status ID [--summary] | prepare --file ticket.json\nrun ID [--wait [--brief]] | cancel ID | verify ID [--wait [--brief]]\ncancel ID --revision N --attempt ATTEMPT_ID --if-unconsumed INSTRUCTION_ID (repeatable)\nwait ID [--timeout SECONDS] [--brief]\nreview --file review.json | recover ID | recover --file continuation.json\ninstruct ID --file instruction.json\nreviews | review-pool --file pool.json | request-review --file request.json\ncancel-review RUN_ID | recover-review RUN_ID\nschedule ID --kind run|verify --request-id KEY | cancel-scheduled KEY\ninstruct ID --instruction-file message.txt --revision N --instruction-id KEY\narchive ID | restore ID\nartifact SHA256 --output FILE\nhealth | diagnose ID | errors ID [--attempt ATTEMPT_ID] [--full]\nbrief ID [ID ...] (up to 8)\nversion | validate delivery|review --file FILE [--ticket-file FILE --attempt ID]\ntrajectory ID [--after N] [--limit 100] [--attempt ID] [--kind EVENT] [--full]\nactivity ID [--attempt ID] | events ID [--after N] [--limit 100]\nsessions | doctor [--repo PATH] | skill | workflow\ntools [--repo PATH] | tools install\nprune [--days 7] (old clean Harness homes only; evidence retained)\n\nAll commands accept --home DIR; data commands print JSON (--json is optional).\n--file - reads JSON from stdin. Instruction files contain UTF-8 text.\nRunning instructions enter the next conversation turn; they do not interrupt the current tool step.\nGuarded cancel requires every bound instruction to have a receipt and no recorded consumption.\nReuse the same instruction ID for retries; uncertain delivery is never replayed.\n--wait/ wait defaults to a 3600-second timeout; timing out does not cancel work.\nStart the service once, then use the bundled skill/SKILL.md for orchestration.\nModel dispatch is off until explicitly enabled on serve.`,
     );
     return;
   }
@@ -252,9 +253,14 @@ async function main() {
     "--after and --limit are only supported by trajectory and events",
   );
   ensure(
-    values.kind === undefined || command === "trajectory",
+    values.kind === undefined || ["trajectory", "schedule"].includes(command),
     "arguments",
-    "--kind is only supported by trajectory",
+    "--kind is only supported by trajectory and schedule",
+  );
+  ensure(
+    values["request-id"] === undefined || command === "schedule",
+    "arguments",
+    "--request-id is only supported by schedule",
   );
   if (command === "health") {
     ensure(positionals.length === 1, "arguments", "health takes no task ID");
@@ -355,6 +361,13 @@ async function main() {
   ensure(
     [
       "prune",
+      "reviews",
+      "review-pool",
+      "request-review",
+      "cancel-review",
+      "recover-review",
+      "schedule",
+      "cancel-scheduled",
       "list",
       "status",
       "errors",
@@ -381,6 +394,7 @@ async function main() {
   );
   const ticketId =
     [
+      "schedule",
       "status",
       "errors",
       "diagnose",
@@ -401,7 +415,16 @@ async function main() {
       : undefined;
   ensure(
     command === "brief" ||
-      positionals.length <= (ticketId || command === "artifact" ? 2 : 1),
+      positionals.length <=
+        (ticketId ||
+        [
+          "artifact",
+          "cancel-review",
+          "recover-review",
+          "cancel-scheduled",
+        ].includes(command)
+          ? 2
+          : 1),
     "arguments",
     "Unexpected positional arguments",
   );
@@ -417,7 +440,7 @@ async function main() {
     attempt: ["trajectory", "activity"].includes(command)
       ? values.attempt
       : undefined,
-    kind: values.kind,
+    kind: command === "schedule" ? undefined : values.kind,
   });
   const client = new WorkerClient(home);
   const read = () => {
@@ -491,6 +514,7 @@ async function main() {
     result = report;
     if (!report.ok) process.exitCode = 1;
   } else if (command === "wait") result = await wait(ticketId!);
+  else if (command === "reviews") result = await client.request("/api/reviews");
   else if (command === "sessions")
     result = await client.request("/api/sessions");
   else if (command === "artifact") {
@@ -522,38 +546,59 @@ async function main() {
         "Provide --file JSON or --instruction-file TEXT with --revision and --instruction-id",
       );
     const raw =
-      command === "cancel"
-        ? {
-            action: "cancel",
-            ticketId,
-            ...(cancellationGuard ? { ifUnconsumed: cancellationGuard } : {}),
-          }
-        : command === "instruct"
-          ? {
-              ...(values.file
-                ? instructionInputSchema.parse(read())
-                : {
-                    instruction: readFileSync(
-                      values["instruction-file"] === "-"
-                        ? 0
-                        : resolve(values["instruction-file"] ?? ""),
-                      "utf8",
-                    ),
-                    revision: Number(values.revision),
-                    instructionId: values["instruction-id"],
-                  }),
-              action: "instruct",
-              ticketId,
-            }
-          : command === "archive" || command === "restore"
-            ? { action: "archive", ticketId, archived: command === "archive" }
-            : command === "prepare"
-              ? { action: command, ticket: read() }
-              : command === "review"
-                ? { action: command, review: read() }
-                : command === "recover"
-                  ? { action: command, continuation: read() }
-                  : { action: command, ticketId };
+      command === "review-pool"
+        ? { action: command, pool: read() }
+        : command === "request-review"
+          ? { action: command, request: read() }
+          : command === "cancel-review" || command === "recover-review"
+            ? { action: command, runId: positionals[1] }
+            : command === "cancel-scheduled"
+              ? { action: command, requestId: positionals[1] }
+              : command === "schedule"
+                ? {
+                    action: command,
+                    ticketId,
+                    kind: values.kind,
+                    requestId: values["request-id"],
+                  }
+                : command === "cancel"
+                  ? {
+                      action: "cancel",
+                      ticketId,
+                      ...(cancellationGuard
+                        ? { ifUnconsumed: cancellationGuard }
+                        : {}),
+                    }
+                  : command === "instruct"
+                    ? {
+                        ...(values.file
+                          ? instructionInputSchema.parse(read())
+                          : {
+                              instruction: readFileSync(
+                                values["instruction-file"] === "-"
+                                  ? 0
+                                  : resolve(values["instruction-file"] ?? ""),
+                                "utf8",
+                              ),
+                              revision: Number(values.revision),
+                              instructionId: values["instruction-id"],
+                            }),
+                        action: "instruct",
+                        ticketId,
+                      }
+                    : command === "archive" || command === "restore"
+                      ? {
+                          action: "archive",
+                          ticketId,
+                          archived: command === "archive",
+                        }
+                      : command === "prepare"
+                        ? { action: command, ticket: read() }
+                        : command === "review"
+                          ? { action: command, review: read() }
+                          : command === "recover"
+                            ? { action: command, continuation: read() }
+                            : { action: command, ticketId };
     const action = actionSchema.parse(raw);
     result = await client.action(action);
     if (

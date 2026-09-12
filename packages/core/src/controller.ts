@@ -1,3 +1,4 @@
+import { ReviewCoordinator } from "./review-coordinator.js";
 import { existsSync, mkdirSync, readFileSync, realpathSync } from "node:fs";
 import { join, resolve } from "node:path";
 import type {
@@ -65,6 +66,7 @@ export interface ControllerOptions {
 export class Controller {
   readonly store: Store;
   readonly home: string;
+  readonly reviewCoordinator: ReviewCoordinator;
   readonly capacity: number;
   readonly dispatchEnabled: boolean;
   private operations = new Map<
@@ -90,9 +92,24 @@ export class Controller {
     let store: Store | undefined;
     try {
       this.store = store = new Store(this.home);
+      this.reviewCoordinator = new ReviewCoordinator({
+        store: this.store,
+        home: this.home,
+        capacity: this.capacity,
+        dispatchEnabled: this.dispatchEnabled,
+        runtime: options.runtime,
+        dshBin: options.dshBin,
+        activeCount: () => this.activeCount(),
+        run: (id) => this.run(id),
+        verify: (id) => this.verify(id),
+        wait: (id) => this.wait(id),
+      });
       // Startup fences incomplete operations. It never sends or retries a prompt.
       for (const r of this.store.list())
-        if (r.activeOperation)
+        if (
+          r.activeOperation &&
+          !this.reviewCoordinator.owns(r.activeOperation)
+        )
           this.store.update(
             r.ticket.ticketId,
             "execution.interrupted",
@@ -118,6 +135,15 @@ export class Controller {
       this.lock.close();
       throw error;
     }
+  }
+  private activeCount() {
+    return new Set([
+      ...this.operations.keys(),
+      ...this.store
+        .list(false)
+        .filter((r) => r.activeOperation)
+        .map((r) => r.ticket.ticketId),
+    ]).size;
   }
   private artifactDir() {
     return join(this.home, "artifacts");
@@ -205,7 +231,9 @@ export class Controller {
       }),
       capacity: this.capacity,
       build: buildInfo,
-      active: this.operations.size,
+      active:
+        this.operations.size +
+        this.reviewCoordinator.runs().filter((r) => r.slotHeld).length,
       dispatchEnabled: this.dispatchEnabled,
       runtimeVersion: this.options.dshBin
         ? "custom executable (version unverified)"
@@ -219,15 +247,41 @@ export class Controller {
     input: Extract<Action, { action: "prune" }>,
   ): Promise<ReturnType<typeof pruneEphemeral>>;
   async action(
-    input: Exclude<Action, { action: "prune" }>,
+    input: Exclude<
+      Action,
+      {
+        action:
+          | "prune"
+          | "review-pool"
+          | "request-review"
+          | "cancel-review"
+          | "recover-review"
+          | "schedule"
+          | "cancel-scheduled";
+      }
+    >,
   ): Promise<TicketView>;
-  async action(
-    input: unknown,
-  ): Promise<TicketView | ReturnType<typeof pruneEphemeral>>;
+  async action(input: unknown): Promise<unknown>;
   async action(input: unknown) {
     ensure(!this.closing, "shutting_down", "Controller is shutting down");
     const command = actionSchema.parse(input);
     switch (command.action) {
+      case "review-pool":
+        return this.reviewCoordinator.configure(command.pool);
+      case "request-review":
+        return this.reviewCoordinator.request(command.request);
+      case "cancel-review":
+        return this.reviewCoordinator.cancel(command.runId);
+      case "recover-review":
+        return this.reviewCoordinator.recover(command.runId);
+      case "schedule":
+        return this.reviewCoordinator.schedule(
+          command.requestId,
+          command.ticketId,
+          command.kind,
+        );
+      case "cancel-scheduled":
+        return this.reviewCoordinator.cancelScheduled(command.requestId);
       case "prune":
         return pruneEphemeral(this.home, this.store.list(false), command.days);
       case "instruct":
@@ -338,6 +392,7 @@ export class Controller {
   }
   prepare(input: unknown) {
     const ticket = ticketSchema.parse(input);
+    this.reviewCoordinator.validateTicket({ ticket });
     ensure(
       ticket.targetRepo.startsWith("/"),
       "repository_path",
@@ -453,13 +508,14 @@ export class Controller {
     return this.status(ticket.ticketId);
   }
   run(id: string) {
+    this.reviewCoordinator.beforeOperation(id, "run");
     ensure(
       this.dispatchEnabled,
       "dispatch_disabled",
       "Dispatch is disabled. Start the service with --enable-dispatch after development acceptance.",
     );
     ensure(
-      this.operations.size < this.capacity,
+      this.activeCount() < this.capacity,
       "capacity",
       "Worker capacity reached",
     );
@@ -587,7 +643,7 @@ export class Controller {
       primaryRepository: r.ticket.targetRepo,
       baseCommit: r.ticket.baseCommit,
     });
-    const prompt = `${workerRole}\n\nExecution workspace (controller-owned):\n${workspace}\nRead, edit and run assignment commands in workingDirectory. Resolve assignment-relative source, test and document paths there. The ticket targetRepo is the primary repository reference, not your execution checkout; preserve it. Read the worktree files before editing them.\n\n${local.context}\n\nAssignment:\n${canonical(r.ticket)}\n\nHistorical review / continuation (its attemptId is NOT the current delivery binding):\n${instruction}\n\nAdditional execution instructions within assigned scope:\n${queued.map((i) => i.text).join("\n\n")}\n\nCurrent snapshot: ${before.digest}\n\nDelivery field types: notRun and blockers are string[] (for example ["Live provider check was not run"]), never object arrays. Use [] when empty. Commands are {command: string, result: string}[]; evidence is {acceptanceId: string, evidence: string}[]. Copy ticketId, revision and attemptId ONLY from the current delivery example below. Preserve true command exit codes; do not infer success from tail/grep/awk pipeline exit status. Use focused regressions while correcting known issues, then run the required full gates once the changes settle; retain output for counting instead of rerunning checks only to summarize them.\n\nYour final response must be ONLY a JSON delivery document matching this shape (no fences):\n${JSON.stringify(deliveryExample)}\nUse outcome blocked and blockers for unresolved issues. Do not write the delivery into the checkout.`;
+    const prompt = `${workerRole}\n\nExecution workspace (controller-owned):\n${workspace}\nRead, edit and run assignment commands in workingDirectory. Resolve assignment-relative source, test and document paths there. The ticket targetRepo is the primary repository reference, not your execution checkout; preserve it. Read the worktree files before editing them.\n\n${local.context}\n\nAssignment:\n${canonical(r.ticket)}\n\nHistorical review / continuation (its attemptId is NOT the current delivery binding):\n${instruction}\n\nAdditional execution instructions within assigned scope:\n${queued.map((i) => i.text).join("\n\n")}\n\nCurrent snapshot: ${before.digest}\n\nDelivery field types: notRun and blockers are string[] (for example ["Live provider check was not run"]), never object arrays. Use [] when empty. Commands are {command: string, result: string}[]; evidence is {acceptanceId: string, evidence: string}[]. Provide exactly ONE evidence entry for EACH assigned acceptance ID, with no missing or duplicate IDs; combine findings for the same criterion into that entry. Copy ticketId, revision and attemptId ONLY from the current delivery example below. Preserve true command exit codes; do not infer success from tail/grep/awk pipeline exit status. Use focused regressions while correcting known issues, then run the required full gates once the changes settle; retain output for counting instead of rerunning checks only to summarize them.\n\nYour final response must be ONLY a JSON delivery document matching this shape (no fences):\n${JSON.stringify(deliveryExample)}\nUse outcome blocked and blockers for unresolved issues. Do not write the delivery into the checkout.`;
     let runtimePrompt = answer
       ? `Answer to the previous blocker:\n${answer.instruction}\n\n${prompt}`
       : prompt;
@@ -895,6 +951,7 @@ export class Controller {
         });
       } finally {
         this.operations.delete(id);
+        this.reviewCoordinator.kick();
       }
     });
     this.operations.set(id, { abort, done });
@@ -1095,6 +1152,15 @@ export class Controller {
     return true;
   }
   async cancel(id: string, condition?: CancellationGuard) {
+    const reviewOperation = this.store.get(id, false).activeOperation;
+    if (
+      condition === undefined &&
+      reviewOperation &&
+      this.reviewCoordinator.owns(reviewOperation)
+    ) {
+      await this.reviewCoordinator.cancel(reviewOperation);
+      return this.status(id);
+    }
     const guard =
       condition === undefined
         ? undefined
@@ -1141,8 +1207,9 @@ export class Controller {
     return this.status(id);
   }
   verify(id: string) {
+    this.reviewCoordinator.beforeOperation(id, "verify");
     ensure(
-      this.operations.size < this.capacity,
+      this.activeCount() < this.capacity,
       "capacity",
       "Worker capacity reached",
     );
@@ -1282,6 +1349,7 @@ export class Controller {
         });
       } finally {
         this.operations.delete(id);
+        this.reviewCoordinator.kick();
       }
     });
     this.operations.set(id, { abort, done });
@@ -1310,6 +1378,7 @@ export class Controller {
         "stale_snapshot",
         "Review snapshot is stale",
       );
+      this.reviewCoordinator.validateAcceptance(review, r);
       if (review.verdict === "accept") {
         ensure(
           !snapshot.violations.length &&
@@ -1362,6 +1431,12 @@ export class Controller {
   }
   async recover(input: unknown) {
     const c = continuationSchema.parse(input);
+    const reviewOp = this.store.get(c.ticketId, false).activeOperation;
+    ensure(
+      !reviewOp || !this.reviewCoordinator.owns(reviewOp),
+      "review_recovery_required",
+      "Use recover-review to account for the independent reviewer first",
+    );
     const r = this.store.get(c.ticketId);
     ensure(
       !this.operations.has(c.ticketId),
@@ -1447,6 +1522,11 @@ export class Controller {
         "Previous execution still has a writer",
       );
     }
+    ensure(
+      r.activeOperation || this.activeCount() < this.capacity,
+      "capacity",
+      "Worker capacity reached; recovery needs an available slot",
+    );
     const recoveryId = "recovery:" + uid();
     this.store.update(c.ticketId, "recovery.started", (record) => {
       record.activeOperation = recoveryId;
@@ -1511,6 +1591,7 @@ export class Controller {
         throw error;
       } finally {
         this.operations.delete(c.ticketId);
+        this.reviewCoordinator.kick();
       }
     });
     this.operations.set(c.ticketId, {
@@ -1523,11 +1604,15 @@ export class Controller {
     return work;
   }
   async wait(id: string) {
+    const op = this.store.get(id, false).activeOperation;
+    if (op && this.reviewCoordinator.owns(op))
+      await this.reviewCoordinator.wait(op);
     await this.operations.get(id)?.done;
     return this.status(id);
   }
   async close() {
     this.closing = true;
+    await this.reviewCoordinator.close();
     for (const op of this.operations.values()) op.abort.abort();
     await Promise.all([...this.operations.values()].map((op) => op.done));
     await this.snapshotReader.close();

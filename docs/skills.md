@@ -23,6 +23,8 @@ Paths may be absolute, start with `~/`, or be relative to the configuration file
 
 Run `dsh-worker workflow --home DIR` (or the equivalent Node CLI invocation) to inspect the resolved configuration path, named skills, entry skills and source hashes. Configuration is read again before each attempt; changes apply to subsequent attempts without restarting the service. Avoid editing referenced skill sources during execution: Harness reads those files on demand, while the attempt records their initial hashes rather than freezing all referenced resources.
 
+For opt-in independent ticket reviewers, dynamic pools and final host integration review, see [Two-level review](two-level-review.md). Ordinary tickets retain external review.
+
 ## Selecting implementation methods
 
 Select an implementation skill as the entry and optionally add supporting methods for debugging, design, research or testing. Use skill names from your own files' frontmatter, configure their directories in your control home, and keep their referenced resources available. Select your working agreement through `instructionFiles` when appropriate. No particular skill suite or agent installation is required; the empty example configuration is valid. Keep personal selections outside the shared repository.

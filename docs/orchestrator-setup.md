@@ -4,13 +4,13 @@ Use this guide to generate a personal `dsh-orchestrator` skill for Codex or anot
 
 The repository supplies a portable starting point, rather than requiring the maintainer's personal skills or machine configuration:
 
-| Resource                                                                       | Purpose                                                           | Loaded by                                  |
-| ------------------------------------------------------------------------------ | ----------------------------------------------------------------- | ------------------------------------------ |
-| [Bundled CLI skill](../skill/SKILL.md)                                         | Current commands, contracts and recovery semantics                | External orchestrator                      |
-| [Personal skill template](../examples/dsh-orchestrator/SKILL.md)               | Assignment, coordination, review and integration responsibilities | External orchestrator, after customization |
-| [Local setup template](../examples/dsh-orchestrator/references/local-setup.md) | Your CLI, control home, methods and completion preferences        | Your personal orchestrator skill           |
+| Resource                                                                               | Purpose                                                                          | Loaded by                                      |
+| -------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------- | ---------------------------------------------- |
+| [Bundled CLI skill](../skill/SKILL.md)                                                 | Current commands, contracts and recovery semantics                               | External orchestrator                          |
+| [Personal skill template](../examples/dsh-orchestrator/SKILL.md)                       | Assignment, coordination, review and integration responsibilities                | External orchestrator, after customization     |
+| [Local setup template](../examples/dsh-orchestrator/references/local-setup.md)         | Your CLI, control home, methods and completion preferences                       | Your personal orchestrator skill               |
 | [Host coordination reference](../examples/dsh-orchestrator/references/coordination.md) | Concrete interface, dependency, acceptance, correction and integration decisions | External orchestrator at the relevant decision |
-| Controller `workflow.json`                                                     | Optional implementation skills and instruction files              | Worker, before each attempt                |
+| Controller `workflow.json`                                                             | Optional implementation skills and instruction files                             | Worker, before each attempt                    |
 
 Installing the npm package makes the guide and templates available; it does not install a personal skill into your host or change your controller configuration. The bundled skill can be used directly when you do not need a personal orchestration layer.
 
@@ -149,6 +149,14 @@ The orchestrator should prepare a concrete ticket against the target repository'
 Inspect the host's own evidence too: the decided shared interface, prerequisite readiness in the consumer environment, original acceptance ownership, the disposition of each known correction, and the combined result it reviewed and integrated. A correct worker delivery does not by itself prove the host met these responsibilities. Reuse the current task record; no additional approval ceremony or unrelated test is required.
 
 To confirm that the worker actually used a selected skill or LSP operation, inspect that attempt's trajectory or Web tool activity. `workflow`, `tools`, `doctor`, and successful skill discovery alone do not prove model usage. A wait timeout does not cancel work, and the skill does not automatically wake an inactive host.
+
+## Optional two-level review configuration
+
+When the task explicitly selects independent ticket review workers, teach the host the [two-level workflow](two-level-review.md) in addition to its ordinary external review method. Record one pool per batch, its configured implementation concurrency, reviewer execution settings and optional reviewer `entrySkills`. The entries resolve from the same controller-local `workflow.json` catalog; they select reviewer methods independently of implementation entries. Do not put the host orchestrator skill into the worker catalog or change the host's selected model/reasoning settings.
+
+Validate `help` and the authenticated `reviews` response from the intended service before relying on the new policy. Skill installation, a new CLI build and service activation are separate. An older service must not silently receive a weakened manual-review substitute for a two-level ticket. Availability checks are read-only and do not authorize task dispatch.
+
+The generated guidance must preserve dynamic reviewer startup/cleanup, configured-cap tail review, snapshot-bound host adoption, bounded focused rework and full final-candidate review. Include the rule that a host which substantially implements integration repairs needs independent review of the entire final candidate. Reviewers cannot implement, delegate, accept or merge. Use the existing batch record and [candidate template](../examples/batch-review.md); failed or malformed reports remain failures, with deliberate new requests only after the original outcome and ownership are known.
 
 ## Maintain your personal version
 

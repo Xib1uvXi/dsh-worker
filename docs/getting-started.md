@@ -177,6 +177,12 @@ node dist/cli.js status EXAMPLE-01 --summary
 
 Expected after a passing review: `accepted` and `stale: false`. For actual defects, submit `request_changes` with concrete findings, then assign a new attempt. The orchestrator separately retrieves accepted artifacts with `artifact SHA256 --output FILE`, checks their hashes and applies them to the intended integration checkout. Integration, commits, merges and deployment are separate operations; `accepted` does not perform them.
 
+### Optional independent ticket reviewers
+
+The preceding steps use ordinary external review. To select independent review workers for an authorized batch, follow [Two-level review](two-level-review.md): configure a review pool first, then prepare tickets with `reviewPolicy: "worker_then_astra"` and that `reviewPoolId`. Pool `implementationLimit` sets the batch's implementation and review caps; both roles and verification still share the service's global capacity. Reviews can finish after the last implementation worker exits.
+
+Check the actual CLI with `help` and the running service with `reviews` using the same home before selecting this policy. Rebuilding or installing a new CLI does not upgrade an already running service. If the service does not support the review endpoint, resolve the version mismatch before preparing two-level tickets; do not silently substitute ordinary review. Observe queued run/verify requests in `reviews.operations`, then request an independent review after controller verification. A host must adopt the exact report before acceptance and review the complete integrated candidate separately. The feature is experimental; see [recorded real-provider limits](verification.md#two-level-review-validation).
+
 ## 9. Troubleshoot and resume
 
 ```sh

@@ -12,6 +12,20 @@ Use current command results for current changes. Recorded runs describe their me
 
 Deterministic SDK fixtures are not provider/model execution. A skipped browser or unavailable runtime check is not a pass. Linux needs its own host evidence; the recorded platform is Node 24.18.0 / macOS arm64. Desktop is the browser acceptance target.
 
+## Two-level review validation
+
+On 2026-09-12, the experimental two-level review batch was validated in an isolated checkout based on `569b20ccf7a46da6e893ddd68eb4226f51d9586c`. The pre-documentation-follow-up manifest of 132 non-ignored source files had SHA-256 `1fb2a60664d9282c04d639c20569afc9b3423eecc68b4405135452b5e8e8500c`. This identifies the recorded implementation snapshot; subsequent documentation edits do not claim that the full-tree digest is unchanged.
+
+- `npm run check` passed lint, type checking, build and **208 tests in 23 files**. New deterministic E2E coverage exercises CLI, authenticated HTTP, SQLite, the public SDK wire, actual subprocess cancellation/timeout and Chromium review controls, including cancellation followed by a new request, adoption, restart persistence, and blocking/rework without a usable source. Bare two-level acceptance is refused.
+- A final live-scenario script correction mapped both host review dimensions from the real report instead of hardcoding Standards as passing. Lint, type checking and build passed again; the product and deterministic test inputs were unchanged. The actual adoption block was checked against a retained real failure report and the contract schema. Historical failed runs were not rewritten.
+- A fresh tarball installation passed five actual runtime doctor checks, coding/optional-plugin composition, public exports and missing-dependency diagnostics with **zero model calls**. Independent full-batch Spec and Standards review and focused follow-up found no unresolved blockers.
+
+Real-provider scenarios used actual DeepSeek Harness sessions with `deepseek-flash`, disposable repositories, isolated controller homes, HTTP and Chromium. They observed two concurrent real implementers and two independent reviewers, valid host adoption, candidate lint/test/build and accepted-state persistence after restart. A deterministic defective implementation passed its syntax check but a real reviewer returned Spec and Standards failures. A real implementer repaired it; its malformed delivery then required explicit delivery-only recovery on inspected, tested, unchanged source. A real focused reviewer subsequently passed and the host accepted that repaired snapshot. This recovery is separate evidence, not an uninterrupted successful run.
+
+Across four scenario runs and that explicit resumption, **11 real ReviewRuns produced 7 valid reports (6 pass, 1 request_changes) and 4 format failures**. All four original scenario runs ended with a failure; the final repeat's two reviewers both produced invalid reports. Failed reports were rejected without ticket acceptance or automatic retry, and zero reviewer slots remained held. These finite observations do not establish general review accuracy, unattended reliability, load capacity or host token savings. The feature remains explicitly opt-in and experimental.
+
+Separate host integration exercises rejected individually passing tickets that violated a combined resource limit, a candidate missing an intermediate dependency, and stale candidate/baseline identities after untracked edits or main advancement. These exercise the host procedure; there is no product auto-merge state machine. The batch did not commit, merge, push or switch the ordinary running service as part of this verification. Detailed private evidence stays outside shared source control. Reproduction commands and their prerequisites are in [Two-level review](two-level-review.md#skills-and-verification).
+
 ## Harness 0.1.5 compatibility
 
 On 2026-09-11, the upgrade batch based on `64421ef055b9a69cfa024554ef79feabf1c7e097` pinned the Harness package family to `0.1.5-rc.2`. Validation used Node 24.18.0 on macOS arm64 in an isolated checkout.
@@ -31,7 +45,7 @@ On 2026-09-11, the same Harness upgrade batch changed the default worker model t
 - A real DeepSeek official task omitted the model in its input and resolved to `deepseek-flash`. In **one attempt**, it changed the intended file, returned a receipt, reached `awaiting_review`, and passed controller verification. No owned runtime processes remained, and the disposable controller closed. This is a provider smoke check, not an acceptance decision or multimodal feature validation.
 - Source formatting and whitespace checks passed. Historical Pro verification and the genuine V2 fixture retain their original model provenance. The primary checkout and running service were not changed.
 
-## Current acceptance
+## Historical snapshot optimization acceptance
 
 The snapshot optimization and cleanup batch uses base commit `e3757cb6ecf0c8809809f78dcfbfd7c2d7c78985` plus the uncommitted changes. The source/test/script/build-config manifest has 61 files and SHA-256 `74a0411a422eb5a0ae7fbe93a0127a2da24513d2dd9b8a5b35ff525f0d1237e9`.
 
@@ -41,7 +55,7 @@ The snapshot optimization and cleanup batch uses base commit `e3757cb6ecf0c88098
 - Independent full-batch review passed **Spec and Standards**, with no blocker. The reviewer independently checked raw statistics, source identities, dependency versions and extra Git formatting configurations.
 - The final paired snapshot benchmark recorded 11 samples for each of six cases, with identical snapshot digests. The exact, cached and existing-evidence medians improved by 29.0%, 35.9% and 31.6%, respectively. Historical implementation logs and superseded repair narratives remain in Git history, rather than in the operator guide. See [Performance experiments](performance.md) for reproducible workload definitions, measurements and retained safeguards.
 
-## Default worker model
+## Historical Pro default worker model
 
 The follow-up change defaults omitted `execution.model` to `deepseek-v4-pro` during ticket validation and preserves explicit models. Its 61-file source/test/script/build-config manifest has SHA-256 `2fc5a9cb136b11401d78c2b2d3c5495a71c5a261df525fbd07a24860306518e9`.
 

@@ -2,18 +2,19 @@
 
 Use the same `--home DIR` as the running service. The examples use an installed `dsh-worker`; from a checkout, substitute `node /absolute/path/to/dist/cli.js`.
 
-| Command | Purpose |
-| --- | --- |
-| `health --home DIR` | Check local discovery, recorded service process identity, authenticated connectivity, capacity/dispatch and local Skill configuration. Works when the service is unavailable. |
-| `list --summary --home DIR` | Compact task inventory with current attempt and verification summaries. |
-| `status ID --summary --home DIR` | Current state, revision, operation, attempt receipt/exit, snapshot, verification and uncertain instructions. |
-| `status ID --home DIR` | Full durable task record, including snapshots, deliveries, reviews and continuations. |
-| `errors ID --home DIR` | Historical errors grouped by source and bound to execution/verification/review records. |
-| `errors ID --attempt ATTEMPT_ID --full --home DIR` | Restrict to one execution and include all stored failed-verification output. |
-| `diagnose ID --home DIR` | Current health of a task, historical issues, and context-sensitive next-step argument arrays. Performs no repair. |
-| `recover ID --home DIR` | Inspect interrupted work's current snapshot and remaining owned processes. Requires a separate explicit continuation to recover. |
-| `workflow --home DIR` | Inspect configured Skill names, entry skills and source files. |
-| `doctor --home DIR` | Separately initialize and close the installed Harness SDK/runtime without a model call. |
+| Command                                            | Purpose                                                                                                                                                                       |
+| -------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `health --home DIR`                                | Check local discovery, recorded service process identity, authenticated connectivity, capacity/dispatch and local Skill configuration. Works when the service is unavailable. |
+| `list --summary --home DIR`                        | Compact task inventory with current attempt and verification summaries.                                                                                                       |
+| `status ID --summary --home DIR`                   | Current state, revision, operation, attempt receipt/exit, snapshot, verification and uncertain instructions.                                                                  |
+| `status ID --home DIR`                             | Full durable task record, including snapshots, deliveries, reviews and continuations.                                                                                         |
+| `errors ID --home DIR`                             | Historical errors grouped by source and bound to execution/verification/review records.                                                                                       |
+| `errors ID --attempt ATTEMPT_ID --full --home DIR` | Restrict to one execution and include all stored failed-verification output.                                                                                                  |
+| `diagnose ID --home DIR`                           | Current health of a task, historical issues, and context-sensitive next-step argument arrays. Performs no repair.                                                             |
+| `recover ID --home DIR`                            | Inspect interrupted work's current snapshot and remaining owned processes. Requires a separate explicit continuation to recover.                                              |
+| `workflow --home DIR`                              | Inspect configured Skill names, entry skills and source files.                                                                                                                |
+| `reviews --home DIR`                               | Inspect review pools, scheduled operations, independent runs, cleanup ownership and report applicability.                                                                     |
+| `doctor --home DIR`                                | Separately initialize and close the installed Harness SDK/runtime without a model call.                                                                                       |
 
 `health` checks connectivity, not provider billing, API-key validity or model execution. It does not print the service token or environment-variable values. The workflow check uses the calling CLI environment; supply the service's `DSH_WORKER_WORKFLOW` override here too if one was used. `doctor` is the explicit runtime smoke check and creates its isolated test directory. Use `trajectory ID` or the Web for detailed tool calls and messages; `brief ID` provides current-revision review evidence. See [Efficient orchestration](orchestration.md) for query and pagination semantics.
 
@@ -47,6 +48,25 @@ Use `validate delivery|review --file FILE` for local format checks. For a frozen
 - **Accepted but stale**: The checkout changed after acceptance. Do not treat the old accepted snapshot as approval for the new content.
 
 Suggestions returned by `diagnose` are argument arrays to inspect and use deliberately. The command never starts, cancels, recovers, edits state or accepts work on the caller's behalf.
+
+## Independent review and queue recovery
+
+Use `reviews` and the Web review manager for independent ReviewRun errors. Ticket `errors` and `recover ID` describe implementation/verification history and are not substitutes for this review-specific evidence. Commands below use the same control home as the service; see [Two-level review](two-level-review.md) for request and pool documents.
+
+| Observation                                                        | Inspect and act                                                                                                                                                                                                                                         |
+| ------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| New CLI supports `reviews`, but the service rejects its endpoint   | Check `version`, `health` and the serving build. Updating local files does not activate them in an existing process. Resolve the mismatch before selecting the new policy.                                                                              |
+| Queued work does not start                                         | Inspect dispatch, global owned capacity, pool state, `pendingLimit`, suspension and older executable requests. Ticket `wait` can return before a scheduled request starts. A paused pool retains its queue.                                             |
+| `pool_version`                                                     | Reload `reviews`, preserve the intended batch/configuration, and supply the currently observed version as `expectedVersion`. Do not overwrite another update using a guessed version.                                                                   |
+| `pool_busy` on close                                               | Drain owned work and resolve queued requests. `cancel-scheduled REQUEST_ID` withdraws queued run/verify intent; `cancel-review RUN_ID` cancels a review. Closure is not acceptance.                                                                     |
+| Review timed out, was interrupted, or still holds ownership        | Inspect its phase, error and `slotHeld`. Use `recover-review RUN_ID` when cleanup is required; it releases capacity only after accounting for old processes and does not start another model.                                                           |
+| Queues are suspended after restart                                 | Inspect fenced runs and old process ownership first. Explicitly update the pool to `enabled` with the current version to rearm unsent requests. Never replay an uncertain send automatically.                                                           |
+| Malformed report or `review_coverage`                              | Preserve the failed run. Correct the known cause and deliberately request a new review with a new request ID after cleanup. Do not edit the stored report, relax parsing, or treat exit zero as successful review.                                      |
+| `review_input_changed` or inapplicable source                      | Recheck original and inspection snapshots, configured entry files and report artifacts. Old evidence cannot approve changed content; obtain evidence for the intended current submission.                                                               |
+| `review_source_required`, `review_source` or `review_inconclusive` | Acceptance needs a valid applicable independent source with its exact run ID and report digest. Inconclusive evidence cannot be overridden with a finding disposition. Host blocking or changes requested may omit source when no usable report exists. |
+| Cancelled/failed request ID returns its old result                 | Stable IDs are idempotency identities, not restart commands. After a known terminal result, a deliberate new review or scheduled operation needs a new ID; when the response is unknown, inspect the original identity before doing anything else.      |
+
+Review report format reliability remains an [observed experimental limitation](verification.md#two-level-review-validation). Implementation delivery-only recovery applies only under its separate [frozen-delivery conditions](execution-lifecycle.md#repair-only-the-delivery-report); it is not a command to repair or approve a reviewer report.
 
 ## Missing native runtime dependencies
 

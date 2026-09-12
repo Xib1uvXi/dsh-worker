@@ -7,6 +7,7 @@ Use the **CLI + bundled Skill** to control tasks from an orchestrator, or the **
 - Run independent tickets concurrently, with a separate Harness home for each attempt and explicit conversation resume for answered blockers.
 - Keep ticket revisions, execution evidence, verification and review in durable local state.
 - Bind acceptance to the exact delivered snapshot and external Spec/Standards review.
+- Opt into independent ticket review workers with dynamic batch pools and a separate final host integration review.
 - Configure worker skills explicitly, without requiring a particular personal skill suite.
 
 ## Quick start
@@ -65,6 +66,8 @@ The [review template](examples/review.json) must identify the current ticket rev
 
 **Accepted does not mean committed, merged, published or deployed.** Integration remains the orchestrator's responsibility.
 
+For opt-in independent ticket reviewers, dynamic pools and final host integration review, see [Two-level review](docs/two-level-review.md). Ordinary tickets retain external review.
+
 ## Orchestrator and desktop interfaces
 
 Load the bundled command workflow and inspect CLI usage:
@@ -86,6 +89,7 @@ To connect your own engineering methods and delivery preferences, follow [Create
 | Wait for a task                   | `dsh-worker wait TASK-01 --timeout 300`                                                                   |
 | Send a revision-bound instruction | `dsh-worker instruct TASK-01 --instruction-file message.txt --revision 1 --instruction-id TASK-01-note-1` |
 | Inspect historical errors         | `dsh-worker errors TASK-01`                                                                               |
+| Inspect review pools and queues   | `dsh-worker reviews`                                                                                      |
 | Get recovery guidance             | `dsh-worker diagnose TASK-01`                                                                             |
 | Inspect an interrupted task       | `dsh-worker recover TASK-01`                                                                              |
 | Retrieve a verified snapshot file | `dsh-worker artifact SHA256 --output FILE`                                                                |
@@ -168,17 +172,18 @@ Runtime behavior uses the official `dsh --profile sdk` launcher and ordered patc
 
 ## Documentation
 
-| Guide                                          | Use it for                                                                    |
-| ---------------------------------------------- | ----------------------------------------------------------------------------- |
-| [Getting started](docs/getting-started.md)     | Installation, credentials, Dashboard login and the first reviewed task        |
-| [Bundled orchestrator skill](skill/SKILL.md)   | Assignment handoff and the CLI review loop                                    |
-| [Create your own orchestrator skill](docs/orchestrator-setup.md) | Generate and validate a personal orchestrator using your own methods |
-| [Skill configuration](docs/skills.md)          | Optional worker skills and instruction files                                  |
-| [CLI troubleshooting](docs/troubleshooting.md) | Error codes, failed verification, historical attempts and safe recovery       |
-| [Architecture](docs/architecture.md)           | Components, durable contracts and runtime integration                         |
-| [Project workflow](docs/agents/domain.md)      | Repository guidance, local task tracking, domain context and decision records |
-| [Performance experiments](docs/performance.md) | Snapshot ablations, workload and measured tradeoffs                           |
-| [Verification record](docs/verification.md)    | Recorded checks and the limits of their evidence                              |
+| Guide                                                            | Use it for                                                                               |
+| ---------------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
+| [Getting started](docs/getting-started.md)                       | Installation, credentials, Dashboard login and the first reviewed task                   |
+| [Bundled orchestrator skill](skill/SKILL.md)                     | Assignment handoff and the CLI review loop                                               |
+| [Create your own orchestrator skill](docs/orchestrator-setup.md) | Generate and validate a personal orchestrator using your own methods                     |
+| [Skill configuration](docs/skills.md)                            | Optional worker skills and instruction files                                             |
+| [Two-level review](docs/two-level-review.md)                     | Independent reviewers, dynamic pool limits, evidence adoption and final candidate review |
+| [CLI troubleshooting](docs/troubleshooting.md)                   | Error codes, failed verification, historical attempts and safe recovery                  |
+| [Architecture](docs/architecture.md)                             | Components, durable contracts and runtime integration                                    |
+| [Project workflow](docs/agents/domain.md)                        | Repository guidance, local task tracking, domain context and decision records            |
+| [Performance experiments](docs/performance.md)                   | Snapshot ablations, workload and measured tradeoffs                                      |
+| [Verification record](docs/verification.md)                      | Recorded checks and the limits of their evidence                                         |
 
 ## License
 

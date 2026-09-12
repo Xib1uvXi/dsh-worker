@@ -30,6 +30,9 @@ export class Store {
       CREATE TABLE IF NOT EXISTS revisions (id TEXT NOT NULL, revision INTEGER NOT NULL, data TEXT NOT NULL, PRIMARY KEY(id,revision));
       CREATE TABLE IF NOT EXISTS journal (seq INTEGER PRIMARY KEY AUTOINCREMENT, time TEXT NOT NULL, ticket_id TEXT NOT NULL, type TEXT NOT NULL, data TEXT NOT NULL);
       CREATE INDEX IF NOT EXISTS journal_ticket_seq ON journal(ticket_id,seq);
+      CREATE TABLE IF NOT EXISTS review_pools (id TEXT PRIMARY KEY, data TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS review_runs (id TEXT PRIMARY KEY, data TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS scheduled_operations (id TEXT PRIMARY KEY, data TEXT NOT NULL);
       PRAGMA user_version=2;`);
   }
   transaction<T>(fn: () => T): T {
@@ -187,6 +190,26 @@ export class Store {
       type: r.type,
       data: JSON.parse(r.data),
     }));
+  }
+  objects<T>(
+    table: "review_pools" | "review_runs" | "scheduled_operations",
+  ): T[] {
+    return (
+      this.db.prepare(`SELECT data FROM ${table} ORDER BY rowid`).all() as {
+        data: string;
+      }[]
+    ).map((r) => JSON.parse(r.data) as T);
+  }
+  putObject(
+    table: "review_pools" | "review_runs" | "scheduled_operations",
+    id: string,
+    data: unknown,
+  ) {
+    this.db
+      .prepare(
+        `INSERT INTO ${table} VALUES (?,?) ON CONFLICT(id) DO UPDATE SET data=excluded.data`,
+      )
+      .run(id, JSON.stringify(data));
   }
   close() {
     this.db.close();

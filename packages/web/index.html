@@ -18,6 +18,7 @@
           <button id="nav-tasks" class="nav active">
             <span aria-hidden="true">▤</span>任务工作台
           </button>
+          <button id="nav-reviews" class="nav">审查调度</button>
           <button id="nav-sessions" class="nav">
             <span aria-hidden="true">◷</span>会话记录
           </button>
@@ -211,6 +212,41 @@ tests/</textarea
         <p id="create-error" role="alert"></p>
         <button class="primary" type="submit">准备工作目录</button>
       </form>
+    </dialog>
+    <dialog id="review-manager">
+      <button id="close-review-manager" type="button">关闭审查调度</button>
+      <h2>独立审查调度</h2>
+      <p>按待审任务动态开启 reviewer；完成清理后释放。全部角色共享服务容量。</p>
+      <button id="refresh-reviews" type="button">刷新审查调度</button>
+      <div id="review-pools"></div>
+      <details>
+        <summary>配置审查池</summary>
+        <form id="review-pool-form">
+          <label>池 ID<input name="poolId" required /></label>
+          <label>批次 ID<input name="batchId" required /></label>
+          <label
+            >实现与审查各自的最大并发<input
+              name="limit"
+              type="number"
+              min="1"
+              max="32"
+              value="2"
+              required
+          /></label>
+          <label
+            >审查 Provider<input
+              name="reviewProvider"
+              value="deepseek-official"
+              required
+          /></label>
+          <label
+            >审查模型<input name="reviewModel" value="deepseek-flash" required
+          /></label>
+          <button type="submit">保存并启用审查池</button>
+        </form>
+      </details>
+      <p id="review-manager-error" role="alert"></p>
+      <div id="review-run-list"></div>
     </dialog>
     <script type="module" src="/app.js"></script>
   </body>

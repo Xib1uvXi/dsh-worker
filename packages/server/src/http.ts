@@ -101,6 +101,8 @@ export async function startHttp(
           res.end(bytes);
           return;
         }
+        if (req.method === "GET" && url.pathname === "/api/reviews")
+          return json(res, controller.reviewCoordinator.status());
         if (req.method === "GET" && url.pathname === "/api/overview")
           return json(res, await controller.pollOverview());
         if (req.method === "GET" && url.pathname === "/api/briefs") {

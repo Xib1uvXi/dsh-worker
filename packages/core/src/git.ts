@@ -421,7 +421,13 @@ export function capture(
     try {
       stat = lstatSync(join(cwd, path), { bigint: true });
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      // A tracked descendant is deleted when its former directory becomes a file.
+      if (
+        !["ENOENT", "ENOTDIR"].includes(
+          (error as NodeJS.ErrnoException).code ?? "",
+        )
+      )
+        throw error;
     }
     let entry: FileEntry;
     let objectId: string | undefined;

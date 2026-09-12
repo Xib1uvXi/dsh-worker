@@ -1,0 +1,9 @@
+{
+  "requestId": "TASK-01-review-1",
+  "poolId": "batch-review",
+  "ticketId": "TASK-01",
+  "revision": 1,
+  "attemptId": "replace-with-current-implementation-attempt",
+  "snapshotDigest": "0000000000000000000000000000000000000000000000000000000000000000",
+  "mode": "initial"
+}

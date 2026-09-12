@@ -29,6 +29,14 @@ Hold consumers of an unfinished shared fixture or interface until its required r
 
 If the worker returns a blocker, read its evidence and recommendation. Resolve routine decisions within existing authorization. Contract changes use a new revision; recovery first accounts for old writers. A blocked delivery ends its attempt. An explicit bound `kind: "answer"` continuation can preserve the conversation for the next run; see [Answer a blocked worker](execution-lifecycle.md#answer-a-blocked-worker). There is no live question/answer channel or automatic host wakeup. Existing `instruct` supports guidance to an active attempt, not changes to the assignment contract.
 
+## Select independent ticket review for a batch
+
+Ordinary tickets use the external review loop above. For an explicitly selected two-level batch, use [the pool and request workflow](two-level-review.md) to queue implementation/verification and request an independent reviewer for each delivered snapshot. The host adopts report evidence, resolves actual defects through bounded rework, and requests a focused review tied to the prior run. A worker report is evidence for a host decision; it is not acceptance or permission to merge.
+
+The service owns queue scheduling and reviewer startup/shutdown. The host need not repeatedly list every task to allocate each free reviewer slot. Use compact observations when deciding the next action; `reviews.operations` identifies whether a scheduled operation has actually started, while ticket `wait` can return a pre-dispatch state. `reviews` is a snapshot query, not a blocking wait or automatic wakeup channel. This design does not establish host token savings.
+
+Keep the batch's configured implementation concurrency as the review cap, even when live implementers reach zero. Pause or drain via version-bound pool updates, and inspect uncertain ownership before recovery. For final integration, record baseline B, candidate C and ticket provenance with [the batch review template](../examples/batch-review.md). Astra or the selected host reviews all B-to-C changes and combined acceptance; independent full-candidate review is required if that host substantially implements a repair. Main advancement or candidate edits require refreshed evidence before promotion.
+
 ## Close the correction loop
 
 An instruction's `received` state means admission to the native inbox. Its optional `consumption` record links the primary session's `user/message` to its message ID, observed time, turn when available, and durable journal sequence. This proves entry into the conversation, not understanding, implementation or success. Consumption can precede the IPC receipt; an uncertain receipt remains uncertain even when separate consumption evidence exists. Older instructions may have no consumption evidence.
@@ -57,12 +65,12 @@ The host records why it is waiting, continuing independent work or stopping an a
 
 All queries use the same authenticated control service. They never dispatch, accept, recover or persist a new task decision.
 
-| Command | Output |
-| --- | --- |
-| `brief ID` | Execution worktree, target repository/base, current revision/attempt, scope and acceptance, worker claims, changed paths, latest verification and review bound to that delivered snapshot. No full diff, file manifest or prior attempt history. |
-| `trajectory ID [--after N] [--limit N] [--attempt ID] [--kind EVENT] [--full]` | Ordered observable events, current observed agent activity, `cursor` and `hasMore`. |
-| `activity ID [--attempt ID]` | Agent activity and available native statistics, with an empty entry list. Activity is observed state, not acceptance or proof of OS-process liveness. |
-| `events ID [--after N] [--limit N]` | Per-ticket control journal entries, excluding native `harness.notification` and process-bookkeeping events; use trajectory for native details. |
+| Command                                                                        | Output                                                                                                                                                                                                                                           |
+| ------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `brief ID`                                                                     | Execution worktree, target repository/base, current revision/attempt, scope and acceptance, worker claims, changed paths, latest verification and review bound to that delivered snapshot. No full diff, file manifest or prior attempt history. |
+| `trajectory ID [--after N] [--limit N] [--attempt ID] [--kind EVENT] [--full]` | Ordered observable events, current observed agent activity, `cursor` and `hasMore`.                                                                                                                                                              |
+| `activity ID [--attempt ID]`                                                   | Agent activity and available native statistics, with an empty entry list. Activity is observed state, not acceptance or proof of OS-process liveness.                                                                                            |
+| `events ID [--after N] [--limit N]`                                            | Per-ticket control journal entries, excluding native `harness.notification` and process-bookkeeping events; use trajectory for native details.                                                                                                   |
 
 `wait ID --brief`, `run ID --wait --brief` and `verify ID --wait --brief` return this same brief when waiting ends. The default remains full status. A wait can end in a failed, blocked or interrupted state; read the returned state and evidence. Timing out does not cancel or resend work, and `--brief` without waiting is refused for run/verify.
 

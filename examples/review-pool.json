@@ -1,0 +1,16 @@
+{
+  "poolId": "batch-review",
+  "batchId": "batch-01",
+  "expectedVersion": 0,
+  "implementationLimit": 2,
+  "state": "enabled",
+  "execution": {
+    "provider": "deepseek-official",
+    "model": "deepseek-flash",
+    "timeoutSeconds": 600,
+    "patches": [],
+    "envRequired": [],
+    "credentialEnv": ["DEEPSEEK_API_KEY"]
+  },
+  "entrySkills": []
+}

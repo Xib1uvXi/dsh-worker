@@ -22,6 +22,10 @@ The root `AGENTS.md` supplies contributor instructions. The [bundled skill](../.
 - **Snapshot:** the exact deliverable file and Git state bound to verification and review.
 - **Verification:** controller-run checks against the unchanged snapshot, with recorded results.
 - **Review:** external Spec and Standards decisions bound to a revision, attempt and snapshot.
+- **Review run:** an independent worker's snapshot-bound inspection and report; completion does not record acceptance.
+- **Review pool:** batch-bound configuration for dynamic reviewers; its configured implementation concurrency caps reviewers even after implementers exit.
+- **Scheduled operation:** durable explicit intent to run or verify, distinct from a started operation.
+- **Candidate review:** host review of the complete target-baseline-to-candidate change before integration, including composition and integration repairs.
 - **Accepted:** controller acceptance evidence; it does not imply a commit, integration or release.
 - **Recovery:** inspection and explicit continuation after old writers are accounted for; no automatic model resend.
 

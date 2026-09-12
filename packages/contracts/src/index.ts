@@ -39,6 +39,158 @@ export const runtimeSchema = z
     plugins: pluginsSchema.optional(),
   })
   .strict();
+export const reviewPoolInputSchema = z
+  .object({
+    poolId: id,
+    batchId: id,
+    expectedVersion: z.number().int().nonnegative(),
+    implementationLimit: z.number().int().min(1).max(32),
+    state: z.enum(["enabled", "paused", "closed"]),
+    execution: runtimeSchema,
+    entrySkills: z.array(text).default([]),
+  })
+  .strict();
+export type ReviewPoolInput = z.infer<typeof reviewPoolInputSchema>;
+export interface ReviewPool extends Omit<ReviewPoolInput, "expectedVersion"> {
+  version: number;
+  pendingLimit?: number;
+  updatedAt: string;
+}
+export const reviewRequestSchema = z
+  .object({
+    requestId: id,
+    poolId: id,
+    ticketId: id,
+    revision: z.number().int().positive(),
+    attemptId: id,
+    snapshotDigest: digest,
+    mode: z.enum(["initial", "focused"]).default("initial"),
+    priorRunId: id.optional(),
+  })
+  .strict()
+  .superRefine((r, ctx) => {
+    if ((r.mode === "focused") !== !!r.priorRunId)
+      ctx.addIssue({
+        code: "custom",
+        message:
+          "Focused review requires a prior run; initial review must not reuse one",
+      });
+  });
+export type ReviewRequest = z.infer<typeof reviewRequestSchema>;
+const reviewAssessment = z
+  .object({
+    verdict: z.enum(["pass", "fail", "inconclusive"]),
+    rationale: text,
+  })
+  .strict();
+export const ticketReviewReportSchema = z
+  .object({
+    spec: reviewAssessment,
+    standards: reviewAssessment,
+    recommendation: z.enum(["pass", "request_changes", "blocked"]),
+    coverage: z.array(z.object({ acceptanceId: id, evidence: text }).strict()),
+    inspectedPaths: z.array(relativePath).min(1),
+    findings: z.array(
+      z
+        .object({
+          findingId: id,
+          dimension: z.enum(["spec", "standards"]),
+          severity: z.enum(["critical", "high", "medium", "low"]),
+          blocking: z.boolean(),
+          path: relativePath,
+          line: z.number().int().positive().optional(),
+          requirement: text,
+          trigger: text,
+          evidence: text,
+        })
+        .strict(),
+    ),
+    commands: z.array(z.object({ command: text, result: text }).strict()),
+    limitations: z.array(text),
+  })
+  .strict()
+  .superRefine((r, ctx) => {
+    if (
+      r.recommendation === "pass" &&
+      (r.spec.verdict !== "pass" ||
+        r.standards.verdict !== "pass" ||
+        r.findings.some((f) => f.blocking))
+    )
+      ctx.addIssue({
+        code: "custom",
+        message: "Pass requires both assessments and no blocking findings",
+      });
+    if (
+      r.recommendation !== "pass" &&
+      !r.findings.length &&
+      !r.limitations.length
+    )
+      ctx.addIssue({
+        code: "custom",
+        message: "A non-pass report requires findings or concrete limitations",
+      });
+  });
+export type TicketReviewReport = z.infer<typeof ticketReviewReportSchema>;
+export interface ReviewRun {
+  id: string;
+  request: ReviewRequest;
+  sequence: number;
+  state:
+    | "queued"
+    | "running"
+    | "completed"
+    | "failed"
+    | "cancelled"
+    | "interrupted";
+  phase: "queued" | "starting" | "running" | "cleanup" | "ended";
+  suspended: boolean;
+  slotHeld: boolean;
+  sessionId: string;
+  marker: string;
+  role: "reviewer";
+  processes: ProcessIdentity[];
+  createdAt: string;
+  startedAt?: string;
+  endedAt?: string;
+  deadlineAt?: string;
+  poolVersion?: number;
+  execution?: ExecutionConfig;
+  entrySkills?: string[];
+  inputDigest?: string;
+  workspace?: string;
+  workspaceDigest?: string;
+  report?: TicketReviewReport;
+  reportDigest?: string;
+  error?: string;
+  receipt?: boolean;
+  cleanExit?: boolean;
+}
+export interface ScheduledOperation {
+  requestId: string;
+  ticketId: string;
+  kind: "run" | "verify";
+  revision: number;
+  sequence: number;
+  state: "queued" | "started" | "failed" | "cancelled";
+  suspended: boolean;
+  createdAt: string;
+  error?: string;
+}
+export interface ReviewStatus {
+  capacity: number;
+  capacityOwned: number;
+  pools: (ReviewPool & {
+    implementationOwned: number;
+    reviewOwned: number;
+    queued: number;
+    oldestWaitSeconds: number | null;
+  })[];
+  runs: (ReviewRun & {
+    applicability: "current" | "stale" | "unavailable";
+    applicabilityReason?: string;
+  })[];
+  operations: ScheduledOperation[];
+}
 export const ticketSchema = z
   .object({
     schemaVersion: z.literal(2),
@@ -61,9 +213,16 @@ export const ticketSchema = z
     setup: z.array(commandSchema).default([]),
     verification: z.array(commandSchema).min(1),
     execution: runtimeSchema,
+    reviewPolicy: z.enum(["external", "worker_then_astra"]).optional(),
+    reviewPoolId: id.optional(),
   })
   .strict()
   .superRefine((t, ctx) => {
+    if (t.reviewPolicy === "worker_then_astra" && !t.reviewPoolId)
+      ctx.addIssue({
+        code: "custom",
+        message: "Two-level review requires reviewPoolId",
+      });
     if (new Set(t.acceptance.map((a) => a.id)).size !== t.acceptance.length)
       ctx.addIssue({
         code: "custom",
@@ -132,6 +291,10 @@ export const reviewSchema = z
     verdict: z.enum(["accept", "request_changes", "blocked"]),
     findings: z.array(text),
     reviewer: text,
+    source: z.object({ runId: id, reportDigest: digest }).strict().optional(),
+    dispositions: z
+      .array(z.object({ findingId: id, evidence: text }).strict())
+      .optional(),
     notes: z.array(text).optional(),
   })
   .strict()
@@ -199,6 +362,26 @@ export const cancellationGuardSchema = z
   .strict();
 export type CancellationGuard = z.infer<typeof cancellationGuardSchema>;
 export const actionSchema = z.discriminatedUnion("action", [
+  z
+    .object({ action: z.literal("review-pool"), pool: reviewPoolInputSchema })
+    .strict(),
+  z
+    .object({
+      action: z.literal("request-review"),
+      request: reviewRequestSchema,
+    })
+    .strict(),
+  z.object({ action: z.literal("cancel-review"), runId: id }).strict(),
+  z.object({ action: z.literal("recover-review"), runId: id }).strict(),
+  z
+    .object({
+      action: z.literal("schedule"),
+      requestId: id,
+      ticketId: id,
+      kind: z.enum(["run", "verify"]),
+    })
+    .strict(),
+  z.object({ action: z.literal("cancel-scheduled"), requestId: id }).strict(),
   z
     .object({
       action: z.literal("prune"),
